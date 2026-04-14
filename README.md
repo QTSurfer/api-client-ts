@@ -1,5 +1,11 @@
 # @qtsurfer/api-client
 
+<p align="center">
+  <a href="https://github.com/QTSurfer/api-client-ts/actions/workflows/ci.yml"><img src="https://github.com/QTSurfer/api-client-ts/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://www.npmjs.com/package/@qtsurfer/api-client"><img src="https://img.shields.io/npm/v/@qtsurfer/api-client" alt="npm"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License"></a>
+</p>
+
 Auto-generated TypeScript API client for the [QTSurfer API](https://github.com/QTSurfer/qtsurfer-api), produced from the OpenAPI 3.1 spec with [`@hey-api/openapi-ts`](https://heyapi.dev/).
 
 This package is intentionally thin: one function per operation, 1:1 with the spec. For workflow orchestration (polling, retries, domain objects, unified errors), use [`@qtsurfer/sdk`](https://github.com/QTSurfer/sdk-ts).
