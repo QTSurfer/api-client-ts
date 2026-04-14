@@ -1,0 +1,59 @@
+{
+  "name": "@qtsurfer/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for the QTSurfer API (generated from OpenAPI spec)",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "openapi-ts.config.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "generate": "openapi-ts",
+    "build": "tsc",
+    "lint": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/QTSurfer/sdk-ts.git"
+  },
+  "bugs": {
+    "url": "https://github.com/QTSurfer/sdk-ts/issues"
+  },
+  "homepage": "https://github.com/QTSurfer/sdk-ts#readme",
+  "author": "QTSurfer (https://github.com/QTSurfer)",
+  "license": "Apache-2.0",
+  "keywords": [
+    "qtsurfer",
+    "sdk",
+    "typescript",
+    "openapi",
+    "api-client",
+    "backtesting",
+    "trading"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@hey-api/openapi-ts": "^0.66",
+    "typescript": "^5.8.0"
+  },
+  "dependencies": {
+    "@hey-api/client-fetch": "^0.8"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
