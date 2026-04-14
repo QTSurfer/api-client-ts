@@ -1,24 +1,26 @@
-# @qtsurfer/sdk
+# @qtsurfer/api-client
 
-TypeScript SDK for the [QTSurfer API](https://github.com/QTSurfer/qtsurfer-api), auto-generated from the OpenAPI 3.1 spec using [`@hey-api/openapi-ts`](https://heyapi.dev/).
+Auto-generated TypeScript API client for the [QTSurfer API](https://github.com/QTSurfer/qtsurfer-api), produced from the OpenAPI 3.1 spec with [`@hey-api/openapi-ts`](https://heyapi.dev/).
 
-- Tree-shakeable standalone functions (no class hierarchy).
+This package is intentionally thin: one function per operation, 1:1 with the spec. For workflow orchestration (polling, retries, domain objects, unified errors), use [`@qtsurfer/sdk`](https://github.com/QTSurfer/sdk-ts).
+
+- Tree-shakeable standalone functions.
 - Full type safety for requests, responses, and error shapes.
-- Native `fetch` based client (no runtime dependencies beyond `@hey-api/client-fetch`).
+- Native `fetch` based client via `@hey-api/client-fetch`.
 - Works in Node.js `>=20`, modern browsers, Deno, and Bun.
 
 ## Installation
 
 ```bash
-pnpm add @qtsurfer/sdk
+pnpm add @qtsurfer/api-client
 # or
-npm install @qtsurfer/sdk
+npm install @qtsurfer/api-client
 ```
 
 ## Quick start
 
 ```ts
-import { client, getExchanges, prepareBacktesting } from '@qtsurfer/sdk';
+import { client, getExchanges, prepareBacktesting } from '@qtsurfer/api-client';
 
 client.setConfig({
   baseUrl: 'https://api.qtsurfer.com/v1',
@@ -56,7 +58,7 @@ All generated types (`Exchange`, `InstrumentDetail`, `BacktestJobResult`, `Resul
 The default client points to the staging server. Override via `setConfig` or by passing options inline:
 
 ```ts
-import { client, getExchanges } from '@qtsurfer/sdk';
+import { client, getExchanges } from '@qtsurfer/api-client';
 
 // Global
 client.setConfig({
@@ -70,7 +72,7 @@ await getExchanges({
 });
 ```
 
-To build your own client (e.g. isolated per-tenant), use `createClient` from `@hey-api/client-fetch`.
+To build your own isolated client (e.g. per-tenant), use `createClient` from `@hey-api/client-fetch`.
 
 ## Error handling
 
@@ -84,16 +86,14 @@ const { data, error } = await prepareBacktesting({
 });
 
 if (error) {
-  // error is typed as the union of error responses for that operation
   console.error(error.code, error.message);
   return;
 }
 
-// data is typed as the success payload
 console.log(data.jobId);
 ```
 
-## Regenerating the SDK
+## Regenerating the client
 
 The `src/generated/` directory is a committed artifact produced from the OpenAPI spec hosted at [`QTSurfer/qtsurfer-api`](https://github.com/QTSurfer/qtsurfer-api/blob/main/openapi.yaml).
 
@@ -110,7 +110,7 @@ Configuration lives in `openapi-ts.config.ts`. To generate against a local check
 
 | Script | Description |
 | ------ | ----------- |
-| `pnpm generate` | Regenerate the SDK from the OpenAPI spec |
+| `pnpm generate` | Regenerate the client from the OpenAPI spec |
 | `pnpm lint` | Type-check without emitting |
 | `pnpm build` | Compile to `dist/` |
 

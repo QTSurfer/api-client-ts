@@ -1,7 +1,7 @@
 {
-  "name": "@qtsurfer/sdk",
+  "name": "@qtsurfer/api-client",
   "version": "0.1.0",
-  "description": "TypeScript SDK for the QTSurfer API (generated from OpenAPI spec)",
+  "description": "Auto-generated TypeScript API client for the QTSurfer API (from OpenAPI 3.1 spec)",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -26,20 +26,20 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/QTSurfer/sdk-ts.git"
+    "url": "git+https://github.com/QTSurfer/api-client-ts.git"
   },
   "bugs": {
-    "url": "https://github.com/QTSurfer/sdk-ts/issues"
+    "url": "https://github.com/QTSurfer/api-client-ts/issues"
   },
-  "homepage": "https://github.com/QTSurfer/sdk-ts#readme",
+  "homepage": "https://github.com/QTSurfer/api-client-ts#readme",
   "author": "QTSurfer (https://github.com/QTSurfer)",
   "license": "Apache-2.0",
   "keywords": [
     "qtsurfer",
-    "sdk",
+    "api-client",
     "typescript",
     "openapi",
-    "api-client",
+    "hey-api",
     "backtesting",
     "trading"
   ],
