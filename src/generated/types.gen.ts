@@ -72,7 +72,7 @@ export type Exchange = {
 };
 
 /**
- * Managed exchange data sources available for backtesting. Currently only ticker is supported; kline and funding rate support is planned.
+ * Managed exchange data sources available for backtesting.
  */
 export type DataSourceType = 'ticker';
 
@@ -81,13 +81,17 @@ export type DataSourceType = 'ticker';
  */
 export type JobState = {
     /**
-     * Unique context ID for the job
+     * Opaque context identifier for the job
      */
     contextId: string;
     /**
-     * Current status of the job
+     * Current status of the job. `Partial` (prepare only) means some
+     * hours are still being produced asynchronously — keep polling.
+     * Treat `Completed | Aborted | Failed` as terminal; anything else
+     * means keep polling.
+     *
      */
-    status: 'New' | 'Started' | 'Completed' | 'Aborted' | 'Failed';
+    status: 'New' | 'Started' | 'Partial' | 'Completed' | 'Aborted' | 'Failed';
     /**
      * Detailed status information, if available
      */
@@ -135,7 +139,7 @@ export type BacktestJobResult = {
  */
 export type ResultMap = {
     /**
-     * Hostname of the worker node that executed the strategy
+     * Identifier of the worker that executed the strategy. Useful when reporting issues so support can correlate with logs.
      */
     hostName?: string;
     /**
@@ -143,7 +147,7 @@ export type ResultMap = {
      */
     iops?: number;
     /**
-     * Redis key of the compiled strategy used for execution. Format: strategy:{userId}:ticker:{compilationId}
+     * Identifier of the compiled strategy that produced this result
      */
     strategyId: string;
     /**
@@ -187,15 +191,15 @@ export type ResultMap = {
      */
     signalCount?: number;
     /**
-     * Storage key for the signal Parquet file. Format: {userId}/exec/{exchange}/{jobId}
+     * Storage key for the signals file. Treat as opaque; use signalsUrl to download.
      */
     signalsId?: string;
     /**
-     * Public HTTPS URL to the Parquet file. Computed at setup time from publicBaseUrl + signalsId + .parquet. Available even before upload completes.
+     * HTTPS URL to download the signals Parquet file. Use signalsUpload to know when it's ready.
      */
     signalsUrl?: string;
     /**
-     * Upload status. Done = file uploaded to R2. Failed = upload error (see signalsUploadReason). Skipped = no signals emitted or storage not configured.
+     * Upload status. Done = signal file is available at signalsUrl. Failed = upload error (see signalsUploadReason). Skipped = no signals emitted.
      */
     signalsUpload?: 'Done' | 'Failed' | 'Skipped';
     /**
@@ -258,6 +262,132 @@ export type GetInstrumentsResponses = {
 };
 
 export type GetInstrumentsResponse = GetInstrumentsResponses[keyof GetInstrumentsResponses];
+
+export type GetExchangeTickersHourData = {
+    body?: never;
+    path: {
+        /**
+         * ID of the exchange (e.g. `binance`).
+         */
+        exchangeId: string;
+        /**
+         * Base asset symbol (first leg of the pair).
+         */
+        base: string;
+        /**
+         * Quote asset symbol (second leg of the pair).
+         */
+        quote: string;
+    };
+    query: {
+        /**
+         * Hour selector in `YYYY-MM-DDTHH` (UTC). The returned segment covers
+         * `[HH:00:00Z, HH+1:00:00Z)`.
+         *
+         */
+        hour: string;
+        /**
+         * Response wire format. `lastra` (default) returns raw Lastra bytes.
+         * `parquet` returns Parquet via on-the-fly conversion using
+         * [lastra-convert](https://github.com/QTSurfer/lastra-convert).
+         *
+         */
+        format?: 'lastra' | 'parquet';
+    };
+    url: '/exchange/{exchangeId}/tickers/{base}/{quote}';
+};
+
+export type GetExchangeTickersHourErrors = {
+    /**
+     * Missing or malformed parameters (e.g. `hour` not `YYYY-MM-DDTHH`).
+     */
+    400: ResponseError;
+    /**
+     * No Lastra segment exists for the requested instrument/hour.
+     */
+    404: ResponseError;
+    /**
+     * Unexpected I/O error serving the file.
+     */
+    500: ResponseError;
+};
+
+export type GetExchangeTickersHourError = GetExchangeTickersHourErrors[keyof GetExchangeTickersHourErrors];
+
+export type GetExchangeTickersHourResponses = {
+    /**
+     * One hour of tickers for the instrument. `Content-Type` is
+     * `application/vnd.lastra` by default or
+     * `application/vnd.apache.parquet` when `format=parquet` was
+     * requested.
+     *
+     */
+    200: Blob | File;
+};
+
+export type GetExchangeTickersHourResponse = GetExchangeTickersHourResponses[keyof GetExchangeTickersHourResponses];
+
+export type GetExchangeKlinesHourData = {
+    body?: never;
+    path: {
+        /**
+         * ID of the exchange (e.g. `binance`).
+         */
+        exchangeId: string;
+        /**
+         * Base asset symbol.
+         */
+        base: string;
+        /**
+         * Quote asset symbol.
+         */
+        quote: string;
+    };
+    query: {
+        /**
+         * Hour selector in `YYYY-MM-DDTHH` (UTC). The returned segment covers
+         * `[HH:00:00Z, HH+1:00:00Z)`.
+         *
+         */
+        hour: string;
+        /**
+         * Response wire format. `lastra` (default) returns raw Lastra bytes.
+         * `parquet` returns Parquet via on-the-fly conversion.
+         *
+         */
+        format?: 'lastra' | 'parquet';
+    };
+    url: '/exchange/{exchangeId}/klines/{base}/{quote}';
+};
+
+export type GetExchangeKlinesHourErrors = {
+    /**
+     * Missing or malformed parameters (e.g. `hour` not `YYYY-MM-DDTHH`).
+     */
+    400: ResponseError;
+    /**
+     * No Lastra segment exists for the requested instrument/hour.
+     */
+    404: ResponseError;
+    /**
+     * Unexpected I/O error serving the file.
+     */
+    500: ResponseError;
+};
+
+export type GetExchangeKlinesHourError = GetExchangeKlinesHourErrors[keyof GetExchangeKlinesHourErrors];
+
+export type GetExchangeKlinesHourResponses = {
+    /**
+     * One hour of klines for the instrument. `Content-Type` is
+     * `application/vnd.lastra` by default or
+     * `application/vnd.apache.parquet` when `format=parquet`.
+     *
+     */
+    200: Blob | File;
+};
+
+export type GetExchangeKlinesHourResponse = GetExchangeKlinesHourResponses[keyof GetExchangeKlinesHourResponses];
 
 export type PostStrategyData = {
     /**
@@ -362,6 +492,15 @@ export type PrepareBacktestingData = {
          *
          */
         to: string;
+        /**
+         * Output bar cadence for the prepared range. Defaults to the publisher's
+         * native cadence (`1s`); coarser cadences are produced on demand via
+         * resampling and stored alongside the native blob in cache. Coarser-than-
+         * source values must be exact multiples of the source cadence — invalid
+         * labels return `400`.
+         *
+         */
+        cadence?: '1s' | '5s' | '1m' | '5m' | '15m' | '1h' | '4h' | '1d';
     };
     path: {
         /**

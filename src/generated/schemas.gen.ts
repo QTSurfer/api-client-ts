@@ -96,7 +96,7 @@ export const ExchangeSchema = {
 
 export const DataSourceTypeSchema = {
     type: 'string',
-    description: 'Managed exchange data sources available for backtesting. Currently only ticker is supported; kline and funding rate support is planned.',
+    description: 'Managed exchange data sources available for backtesting.',
     enum: ['ticker'],
     example: 'ticker'
 } as const;
@@ -108,13 +108,17 @@ export const JobStateSchema = {
     properties: {
         contextId: {
             type: 'string',
-            description: 'Unique context ID for the job',
-            example: 'jctx:ticker:4a627755-7f5a-4297-b647-8dddd8aee416:binance:1rabbrpk5r4kkegs83w6qr:btc/usdt:2o8heaioicr0edvx5ybcap'
+            description: 'Opaque context identifier for the job',
+            example: 'ctx_2o8heaioicr0edvx5ybcap'
         },
         status: {
             type: 'string',
-            description: 'Current status of the job',
-            enum: ['New', 'Started', 'Completed', 'Aborted', 'Failed'],
+            description: `Current status of the job. \`Partial\` (prepare only) means some
+hours are still being produced asynchronously — keep polling.
+Treat \`Completed | Aborted | Failed\` as terminal; anything else
+means keep polling.
+`,
+            enum: ['New', 'Started', 'Partial', 'Completed', 'Aborted', 'Failed'],
             example: 'Completed'
         },
         statusDetail: {
@@ -186,8 +190,8 @@ export const ResultMapSchema = {
     properties: {
         hostName: {
             type: 'string',
-            description: 'Hostname of the worker node that executed the strategy',
-            example: 'backtesting-job-worker-84b569dff9-dr4lb'
+            description: 'Identifier of the worker that executed the strategy. Useful when reporting issues so support can correlate with logs.',
+            example: 'executor10'
         },
         iops: {
             type: 'number',
@@ -197,8 +201,8 @@ export const ResultMapSchema = {
         },
         strategyId: {
             type: 'string',
-            description: 'Redis key of the compiled strategy used for execution. Format: strategy:{userId}:ticker:{compilationId}',
-            example: 'strategy:4a627755-7f5a-4297-b647-8dddd8aee416:ticker:2iyvtenlzh9dabqtxn7nbv'
+            description: 'Identifier of the compiled strategy that produced this result',
+            example: 'strategy:00000000-0000-0000-0000-000000000000:ticker:2iyvtenlzh9dabqtxn7nbv'
         },
         instrument: {
             type: 'string',
@@ -260,19 +264,19 @@ export const ResultMapSchema = {
         },
         signalsId: {
             type: 'string',
-            description: 'Storage key for the signal Parquet file. Format: {userId}/exec/{exchange}/{jobId}',
-            example: '4a627755-7f5a-4297-b647-8dddd8aee416/exec/binance/3vsndwikcuaatjmb83fjtl'
+            description: 'Storage key for the signals file. Treat as opaque; use signalsUrl to download.',
+            example: '00000000-0000-0000-0000-000000000000/exec/binance/3vsndwikcuaatjmb83fjtl'
         },
         signalsUrl: {
             type: 'string',
             format: 'uri',
-            description: 'Public HTTPS URL to the Parquet file. Computed at setup time from publicBaseUrl + signalsId + .parquet. Available even before upload completes.',
-            example: 'https://storage.qtsurfer.com/4a627755-7f5a-4297-b647-8dddd8aee416/exec/binance/3vsndwikcuaatjmb83fjtl.parquet'
+            description: "HTTPS URL to download the signals Parquet file. Use signalsUpload to know when it's ready.",
+            example: 'https://storage.qtsurfer.com/00000000-0000-0000-0000-000000000000/exec/binance/3vsndwikcuaatjmb83fjtl.parquet'
         },
         signalsUpload: {
             type: 'string',
             enum: ['Done', 'Failed', 'Skipped'],
-            description: 'Upload status. Done = file uploaded to R2. Failed = upload error (see signalsUploadReason). Skipped = no signals emitted or storage not configured.',
+            description: 'Upload status. Done = signal file is available at signalsUrl. Failed = upload error (see signalsUploadReason). Skipped = no signals emitted.',
             example: 'Done'
         },
         signalsUploadedAt: {
@@ -284,7 +288,7 @@ export const ResultMapSchema = {
         signalsUploadReason: {
             type: 'string',
             description: 'Human-readable reason when signalsUpload is Failed or Skipped.',
-            example: 'parquet file empty or missing after close'
+            example: 'signal file generation failed'
         }
     }
 } as const;

@@ -49,6 +49,8 @@ All operations are exported as standalone functions; every operation accepts an 
 | -------- | ------ | ---- | ------- |
 | `getExchanges` | GET | `/exchanges` | List available exchanges |
 | `getInstruments` | GET | `/exchange/{exchangeId}/instruments` | List instruments for an exchange |
+| `getExchangeTickersHour` | GET | `/exchange/{exchangeId}/tickers/{base}/{quote}` | Download one hour of tickers as Lastra/Parquet |
+| `getExchangeKlinesHour` | GET | `/exchange/{exchangeId}/klines/{base}/{quote}` | Download one hour of klines as Lastra/Parquet |
 | `postStrategy` | POST | `/strategy` | Compile a strategy |
 | `getStrategyStatus` | GET | `/strategy/{strategyId}` | Poll strategy compilation status |
 | `prepareBacktesting` | POST | `/backtesting/prepare` | Start a data preparation job |
