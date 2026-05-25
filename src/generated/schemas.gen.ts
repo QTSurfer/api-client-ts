@@ -381,7 +381,7 @@ export const AuthTokenResponseSchema = {
     }
 } as const;
 
-export const AuthErrorSchema = {
+export const AuthTokenErrorSchema = {
     type: 'object',
     required: ['code', 'message'],
     description: 'Error envelope returned by `POST /auth/token` when the API key is rejected.',

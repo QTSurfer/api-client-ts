@@ -265,7 +265,7 @@ export type AuthTokenResponse = {
 /**
  * Error envelope returned by `POST /auth/token` when the API key is rejected.
  */
-export type AuthError = {
+export type AuthTokenError = {
     /**
      * Machine-readable error reason.
      */
@@ -287,14 +287,14 @@ export type AuthErrors = {
     /**
      * API key is invalid, revoked, or expired.
      */
-    401: AuthError;
+    401: AuthTokenError;
     /**
      * Rate limit exceeded for this API key.
      */
     429: unknown;
 };
 
-export type AuthError2 = AuthErrors[keyof AuthErrors];
+export type AuthError = AuthErrors[keyof AuthErrors];
 
 export type AuthResponses = {
     /**
