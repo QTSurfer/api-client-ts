@@ -41,12 +41,35 @@ if (error) throw error;
 console.log(exchanges);
 ```
 
+### API key → JWT
+
+Every endpoint above expects a short-lived JWT in `Authorization: Bearer …`.
+Exchange a long-lived API key for one via `auth`:
+
+```ts
+import { auth } from '@qtsurfer/api-client';
+
+const { data, error } = await auth({
+  baseUrl: 'https://api.qtsurfer.com/v1',
+  headers: { 'X-API-Key': process.env.QTSURFER_APIKEY! },
+});
+if (error) throw error;
+
+const { access_token: jwt } = data;  // feed to client.setConfig() for the rest
+```
+
+For production use, prefer the [`@qtsurfer/sdk`](https://github.com/QTSurfer/sdk-ts)
+`auth(apikey)` helper — it returns a session that refreshes the JWT
+transparently, reads `QTSURFER_APIKEY` from the environment, and supports
+pluggable token stores so callers don't reinvent that plumbing.
+
 ## API surface
 
 All operations are exported as standalone functions; every operation accepts an `Options` object and returns `{ data, error, response }`.
 
 | Function | Method | Path | Purpose |
 | -------- | ------ | ---- | ------- |
+| `auth` | POST | `/auth/token` | Exchange an API key for a short-lived JWT |
 | `getExchanges` | GET | `/exchanges` | List available exchanges |
 | `getInstruments` | GET | `/exchange/{exchangeId}/instruments` | List instruments for an exchange |
 | `getExchangeTickersHour` | GET | `/exchange/{exchangeId}/tickers/{base}/{quote}` | Download one hour of tickers as Lastra/Parquet |
