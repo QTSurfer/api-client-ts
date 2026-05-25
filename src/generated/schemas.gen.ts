@@ -185,7 +185,7 @@ export const BacktestJobResultSchema = {
 
 export const ResultMapSchema = {
     type: 'object',
-    description: 'Execution result map. Always includes core fields (hostName, iops, strategyId, instrument). Yield metrics (pnlTotal, totalTrades, winRate, etc.) are present when the strategy emitted at least one trade. When signal storage is enabled, includes signal fields described below.',
+    description: 'Execution result map. Always includes core fields (hostName, iops, strategyId, instrument). Yield metrics (pnlTotal, pnlTotalPercent, totalTrades, winRate, equityCurve, etc.) are present when the strategy emitted at least one trade. When signal storage is enabled, includes signal fields described below.',
     required: ['strategyId', 'instrument'],
     properties: {
         hostName: {
@@ -213,6 +213,12 @@ export const ResultMapSchema = {
             type: 'number',
             format: 'double',
             description: 'Total profit and loss in the output currency',
+            example: 42.75
+        },
+        pnlTotalPercent: {
+            type: 'number',
+            format: 'double',
+            description: 'Total PnL as a percentage of the initial capital (`backtestFunding`). Zero when `backtestFunding` is 0.',
             example: 42.75
         },
         totalTrades: {
@@ -257,6 +263,27 @@ export const ResultMapSchema = {
             description: 'Maximum percentage drawdown from peak equity',
             example: 8.75
         },
+        equityCurve: {
+            type: 'array',
+            description: "Equity curve over the backtest. Element 0 is an anchor at the backtest `from` with `initialCapital`; the remaining points are one sample per emitted yield, in order. Use it to plot the strategy's running equity without re-deriving it from the yield history.",
+            items: {
+                '$ref': '#/components/schemas/EquityPoint'
+            },
+            example: [
+                {
+                    timestamp: 1700000000000,
+                    equity: 100
+                },
+                {
+                    timestamp: 1700000060000,
+                    equity: 110.5
+                },
+                {
+                    timestamp: 1700000120000,
+                    equity: 90.25
+                }
+            ]
+        },
         signalCount: {
             type: 'integer',
             description: 'Number of signals emitted during strategy execution',
@@ -293,8 +320,80 @@ export const ResultMapSchema = {
     }
 } as const;
 
+export const EquityPointSchema = {
+    type: 'object',
+    description: 'Single sample of the running equity at a yield event.',
+    required: ['timestamp', 'equity'],
+    properties: {
+        timestamp: {
+            type: 'integer',
+            format: 'int64',
+            description: 'Epoch milliseconds. The first point in an equity curve is anchored at the backtest `from`; subsequent points carry the timestamp of each emitted yield.',
+            example: 1700000000000
+        },
+        equity: {
+            type: 'number',
+            format: 'double',
+            description: 'Running equity at this point (`initialCapital + cumulativePnl`).',
+            example: 110.5
+        }
+    }
+} as const;
+
 export const strategyIdSchema = {
     description: 'Unique identifier for a compiled strategy',
     type: 'string',
     example: '6bsh31ikwkuivhtgcoa6s4'
+} as const;
+
+export const AuthTokenResponseSchema = {
+    type: 'object',
+    required: ['access_token', 'token_type', 'expires_in', 'tier'],
+    properties: {
+        access_token: {
+            type: 'string',
+            description: 'Short-lived HS256 JWT. Send as `Authorization: Bearer <token>` on all other endpoints.'
+        },
+        token_type: {
+            type: 'string',
+            enum: ['Bearer'],
+            description: 'Always `Bearer`.'
+        },
+        expires_in: {
+            type: 'integer',
+            description: 'Seconds until the JWT expires (typically 3600).',
+            example: 3600
+        },
+        scopes: {
+            type: 'array',
+            description: 'Scopes granted to this token. Reserved for future use; currently always empty.',
+            items: {
+                type: 'string'
+            },
+            example: []
+        },
+        tier: {
+            type: 'string',
+            enum: ['free', 'basic', 'pro', 'elite'],
+            description: 'Subscription tier this token was issued for. Drives rate limits and feature flags on downstream endpoints.',
+            example: 'free'
+        }
+    }
+} as const;
+
+export const AuthTokenErrorSchema = {
+    type: 'object',
+    required: ['code', 'message'],
+    description: 'Error envelope returned by `POST /auth/token` when the API key is rejected.',
+    properties: {
+        code: {
+            type: 'string',
+            enum: ['invalid_apikey', 'apikey_revoked', 'apikey_expired'],
+            description: 'Machine-readable error reason.'
+        },
+        message: {
+            type: 'string',
+            description: 'Human-readable description of the failure.'
+        }
+    }
 } as const;

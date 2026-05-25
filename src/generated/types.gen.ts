@@ -135,7 +135,7 @@ export type BacktestJobResult = {
 };
 
 /**
- * Execution result map. Always includes core fields (hostName, iops, strategyId, instrument). Yield metrics (pnlTotal, totalTrades, winRate, etc.) are present when the strategy emitted at least one trade. When signal storage is enabled, includes signal fields described below.
+ * Execution result map. Always includes core fields (hostName, iops, strategyId, instrument). Yield metrics (pnlTotal, pnlTotalPercent, totalTrades, winRate, equityCurve, etc.) are present when the strategy emitted at least one trade. When signal storage is enabled, includes signal fields described below.
  */
 export type ResultMap = {
     /**
@@ -158,6 +158,10 @@ export type ResultMap = {
      * Total profit and loss in the output currency
      */
     pnlTotal?: number;
+    /**
+     * Total PnL as a percentage of the initial capital (`backtestFunding`). Zero when `backtestFunding` is 0.
+     */
+    pnlTotalPercent?: number;
     /**
      * Total number of trades executed by the strategy
      */
@@ -187,6 +191,10 @@ export type ResultMap = {
      */
     maxDrawdownPercent?: number;
     /**
+     * Equity curve over the backtest. Element 0 is an anchor at the backtest `from` with `initialCapital`; the remaining points are one sample per emitted yield, in order. Use it to plot the strategy's running equity without re-deriving it from the yield history.
+     */
+    equityCurve?: Array<EquityPoint>;
+    /**
      * Number of signals emitted during strategy execution
      */
     signalCount?: number;
@@ -213,9 +221,89 @@ export type ResultMap = {
 };
 
 /**
+ * Single sample of the running equity at a yield event.
+ */
+export type EquityPoint = {
+    /**
+     * Epoch milliseconds. The first point in an equity curve is anchored at the backtest `from`; subsequent points carry the timestamp of each emitted yield.
+     */
+    timestamp: number;
+    /**
+     * Running equity at this point (`initialCapital + cumulativePnl`).
+     */
+    equity: number;
+};
+
+/**
  * Unique identifier for a compiled strategy
  */
 export type StrategyId = string;
+
+export type AuthTokenResponse = {
+    /**
+     * Short-lived HS256 JWT. Send as `Authorization: Bearer <token>` on all other endpoints.
+     */
+    access_token: string;
+    /**
+     * Always `Bearer`.
+     */
+    token_type: 'Bearer';
+    /**
+     * Seconds until the JWT expires (typically 3600).
+     */
+    expires_in: number;
+    /**
+     * Scopes granted to this token. Reserved for future use; currently always empty.
+     */
+    scopes?: Array<string>;
+    /**
+     * Subscription tier this token was issued for. Drives rate limits and feature flags on downstream endpoints.
+     */
+    tier: 'free' | 'basic' | 'pro' | 'elite';
+};
+
+/**
+ * Error envelope returned by `POST /auth/token` when the API key is rejected.
+ */
+export type AuthTokenError = {
+    /**
+     * Machine-readable error reason.
+     */
+    code: 'invalid_apikey' | 'apikey_revoked' | 'apikey_expired';
+    /**
+     * Human-readable description of the failure.
+     */
+    message: string;
+};
+
+export type AuthData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/auth/token';
+};
+
+export type AuthErrors = {
+    /**
+     * API key is invalid, revoked, or expired.
+     */
+    401: AuthTokenError;
+    /**
+     * Rate limit exceeded for this API key.
+     */
+    429: unknown;
+};
+
+export type AuthError = AuthErrors[keyof AuthErrors];
+
+export type AuthResponses = {
+    /**
+     * API key accepted; JWT returned.
+     */
+    200: AuthTokenResponse;
+};
+
+export type AuthResponse = AuthResponses[keyof AuthResponses];
 
 export type GetExchangesData = {
     body?: never;
