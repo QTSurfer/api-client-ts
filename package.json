@@ -1,6 +1,6 @@
 {
   "name": "@qtsurfer/api-client",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Auto-generated TypeScript API client for the QTSurfer API (from OpenAPI 3.1 spec)",
   "type": "module",
   "main": "./dist/index.js",

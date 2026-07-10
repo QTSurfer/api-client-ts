@@ -24,8 +24,105 @@ export const InstrumentSchema = {
     example: 'BTC/USDT'
 } as const;
 
+export const InstrumentListResponseSchema = {
+    description: 'HAL-style response envelope for the instruments listing',
+    type: 'object',
+    required: ['data', 'meta', '_links'],
+    properties: {
+        data: {
+            type: 'array',
+            description: 'The list of instruments for the segment',
+            items: {
+                '$ref': '#/components/schemas/InstrumentDetail'
+            }
+        },
+        meta: {
+            '$ref': '#/components/schemas/InstrumentListMeta'
+        },
+        _links: {
+            '$ref': '#/components/schemas/InstrumentLinks'
+        }
+    }
+} as const;
+
+export const InstrumentListMetaSchema = {
+    description: 'Metadata describing the instruments listing',
+    type: 'object',
+    required: ['updatedAt', 'exchange', 'segment'],
+    properties: {
+        updatedAt: {
+            type: 'string',
+            format: 'date-time',
+            description: 'When this listing was last refreshed',
+            example: '2026-07-09T19:09:07Z'
+        },
+        exchange: {
+            type: 'string',
+            description: 'The exchange the instruments belong to',
+            example: 'binance'
+        },
+        segment: {
+            type: 'string',
+            enum: ['spot', 'futures'],
+            description: 'The market segment served in `data`',
+            example: 'spot'
+        }
+    }
+} as const;
+
+export const InstrumentLinksSchema = {
+    description: 'HAL `_links` — segment discovery for the instruments listing',
+    type: 'object',
+    required: ['self'],
+    properties: {
+        self: {
+            allOf: [
+                {
+                    '$ref': '#/components/schemas/HalLink'
+                }
+            ],
+            description: 'Link to this listing'
+        },
+        spot: {
+            allOf: [
+                {
+                    '$ref': '#/components/schemas/HalLink'
+                }
+            ],
+            description: 'Link to the spot instruments listing. Present when the exchange has a spot segment.'
+        },
+        futures: {
+            allOf: [
+                {
+                    '$ref': '#/components/schemas/HalLink'
+                }
+            ],
+            description: 'Link to the futures instruments listing. Present only when the exchange has a futures segment.'
+        }
+    }
+} as const;
+
+export const HalLinkSchema = {
+    description: 'A HAL link object (Hypertext Application Language)',
+    type: 'object',
+    required: ['href'],
+    properties: {
+        href: {
+            type: 'string',
+            format: 'uri-reference',
+            description: 'The link target as an absolute-path URI reference (resolve against the API base). A URI Template (RFC 6570) when `templated` is true.',
+            example: '/v1/exchange/binance/spot/instruments'
+        },
+        templated: {
+            type: 'boolean',
+            description: 'True when `href` is an RFC 6570 URI Template.',
+            example: false
+        }
+    }
+} as const;
+
 export const InstrumentDetailSchema = {
-    description: 'Exchange instrument with data availability and market info',
+    description: 'Exchange instrument with per-data-type coverage and market info',
     type: 'object',
     required: ['id', 'base', 'quote'],
     properties: {
@@ -44,17 +141,8 @@ export const InstrumentDetailSchema = {
             description: 'Quote currency',
             example: 'USDT'
         },
-        dataFrom: {
-            type: 'string',
-            format: 'date-time',
-            description: 'Earliest timestamp with quality-verified data available for backtesting',
-            example: '2026-03-17T00:00:00Z'
-        },
-        dataTo: {
-            type: 'string',
-            format: 'date-time',
-            description: 'Latest timestamp with quality-verified data available for backtesting',
-            example: '2026-03-31T18:00:00Z'
+        coverage: {
+            '$ref': '#/components/schemas/InstrumentCoverage'
         },
         lastPrice: {
             type: 'number',
@@ -67,6 +155,54 @@ export const InstrumentDetailSchema = {
             format: 'double',
             description: 'Trading volume in the last 24 hours (in quote currency)',
             example: 1234567.89
+        }
+    }
+} as const;
+
+export const InstrumentCoverageSchema = {
+    description: 'Time coverage of available data for this instrument, per data type',
+    type: 'object',
+    properties: {
+        tickers: {
+            allOf: [
+                {
+                    '$ref': '#/components/schemas/CoverageWindow'
+                }
+            ],
+            description: 'Coverage of ticker data'
+        },
+        klines: {
+            allOf: [
+                {
+                    '$ref': '#/components/schemas/CoverageWindow'
+                }
+            ],
+            description: 'Coverage of kline (candlestick) data'
+        }
+    }
+} as const;
+
+export const CoverageWindowSchema = {
+    description: 'The time range of available data for a single data type',
+    type: 'object',
+    properties: {
+        from: {
+            type: 'string',
+            format: 'date-time',
+            description: 'Earliest timestamp with data available',
+            example: '2026-04-10T21:00:00Z'
+        },
+        to: {
+            type: 'string',
+            format: 'date-time',
+            description: 'Latest timestamp with data available',
+            example: '2026-07-09T20:31:08Z'
+        },
+        inactiveSince: {
+            type: 'string',
+            format: 'date-time',
+            description: 'If the instrument stopped producing this data type (delisted/inactive), the timestamp it went inactive. Optional — omitted while the instrument is active.',
+            example: '2026-06-30T12:00:00Z'
         }
     }
 } as const;

@@ -20,7 +20,69 @@ export type ResponseError = {
 export type Instrument = string;
 
 /**
- * Exchange instrument with data availability and market info
+ * HAL-style response envelope for the instruments listing
+ */
+export type InstrumentListResponse = {
+    /**
+     * The list of instruments for the segment
+     */
+    data: Array<InstrumentDetail>;
+    meta: InstrumentListMeta;
+    _links: InstrumentLinks;
+};
+
+/**
+ * Metadata describing the instruments listing
+ */
+export type InstrumentListMeta = {
+    /**
+     * When this listing was last refreshed
+     */
+    updatedAt: string;
+    /**
+     * The exchange the instruments belong to
+     */
+    exchange: string;
+    /**
+     * The market segment served in `data`
+     */
+    segment: 'spot' | 'futures';
+};
+
+/**
+ * HAL `_links` — segment discovery for the instruments listing
+ */
+export type InstrumentLinks = {
+    /**
+     * Link to this listing
+     */
+    self: HalLink;
+    /**
+     * Link to the spot instruments listing. Present when the exchange has a spot segment.
+     */
+    spot?: HalLink;
+    /**
+     * Link to the futures instruments listing. Present only when the exchange has a futures segment.
+     */
+    futures?: HalLink;
+};
+
+/**
+ * A HAL link object (Hypertext Application Language)
+ */
+export type HalLink = {
+    /**
+     * The link target as an absolute-path URI reference (resolve against the API base). A URI Template (RFC 6570) when `templated` is true.
+     */
+    href: string;
+    /**
+     * True when `href` is an RFC 6570 URI Template.
+     */
+    templated?: boolean;
+};
+
+/**
+ * Exchange instrument with per-data-type coverage and market info
  */
 export type InstrumentDetail = {
     /**
@@ -35,14 +97,7 @@ export type InstrumentDetail = {
      * Quote currency
      */
     quote: string;
-    /**
-     * Earliest timestamp with quality-verified data available for backtesting
-     */
-    dataFrom?: string;
-    /**
-     * Latest timestamp with quality-verified data available for backtesting
-     */
-    dataTo?: string;
+    coverage?: InstrumentCoverage;
     /**
      * Last traded price
      */
@@ -51,6 +106,38 @@ export type InstrumentDetail = {
      * Trading volume in the last 24 hours (in quote currency)
      */
     volume24h?: number;
+};
+
+/**
+ * Time coverage of available data for this instrument, per data type
+ */
+export type InstrumentCoverage = {
+    /**
+     * Coverage of ticker data
+     */
+    tickers?: CoverageWindow;
+    /**
+     * Coverage of kline (candlestick) data
+     */
+    klines?: CoverageWindow;
+};
+
+/**
+ * The time range of available data for a single data type
+ */
+export type CoverageWindow = {
+    /**
+     * Earliest timestamp with data available
+     */
+    from?: string;
+    /**
+     * Latest timestamp with data available
+     */
+    to?: string;
+    /**
+     * If the instrument stopped producing this data type (delisted/inactive), the timestamp it went inactive. Optional — omitted while the instrument is active.
+     */
+    inactiveSince?: string;
 };
 
 /**
@@ -344,12 +431,46 @@ export type GetInstrumentsError = GetInstrumentsErrors[keyof GetInstrumentsError
 
 export type GetInstrumentsResponses = {
     /**
-     * A JSON array of Instrument details with data availability
+     * The default (spot) segment's instruments in `data`, `meta`, and HAL `_links` (self + spot/futures segment discovery)
      */
-    200: Array<InstrumentDetail>;
+    200: InstrumentListResponse;
 };
 
 export type GetInstrumentsResponse = GetInstrumentsResponses[keyof GetInstrumentsResponses];
+
+export type GetSegmentInstrumentsData = {
+    body?: never;
+    path: {
+        /**
+         * ID of the exchange to retrieve instruments for
+         */
+        exchangeId: string;
+        /**
+         * Market segment to list instruments for
+         */
+        segment: 'spot' | 'futures';
+    };
+    query?: never;
+    url: '/exchange/{exchangeId}/{segment}/instruments';
+};
+
+export type GetSegmentInstrumentsErrors = {
+    /**
+     * Exchange, segment, or instrument catalog not found
+     */
+    404: ResponseError;
+};
+
+export type GetSegmentInstrumentsError = GetSegmentInstrumentsErrors[keyof GetSegmentInstrumentsErrors];
+
+export type GetSegmentInstrumentsResponses = {
+    /**
+     * An object with a `data` array of instrument details (each with per-data-type coverage) and a `meta` block
+     */
+    200: InstrumentListResponse;
+};
+
+export type GetSegmentInstrumentsResponse = GetSegmentInstrumentsResponses[keyof GetSegmentInstrumentsResponses];
 
 export type GetExchangeTickersHourData = {
     body?: never;
