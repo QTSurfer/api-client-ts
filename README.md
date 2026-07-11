@@ -82,7 +82,7 @@ All operations are exported as standalone functions; every operation accepts an 
 | `cancelExecution` | POST | `/backtesting/execute/{jobId}/cancel` | Cancel a running execution |
 | `getExecutionResult` | GET | `/backtesting/execute/{jobId}` | Poll or fetch execution results |
 
-All generated types (`Exchange`, `InstrumentDetail`, `BacktestJobResult`, `ResultMap`, etc.) are re-exported from the root.
+All generated types (`Exchange`, `InstrumentDetail`, `BacktestJobResult`, `PrepareJobState`, `ResultMap`, etc.) are re-exported from the root.
 
 ## Configuring the client
 

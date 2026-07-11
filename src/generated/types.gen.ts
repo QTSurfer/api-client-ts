@@ -172,13 +172,13 @@ export type JobState = {
      */
     contextId: string;
     /**
-     * Current status of the job. `Partial` (prepare only) means some
-     * hours are still being produced asynchronously — keep polling.
-     * Treat `Completed | Aborted | Failed` as terminal; anything else
-     * means keep polling.
+     * Current status of the job. Treat `Completed | Aborted | Failed` as
+     * terminal; `New | Started` mean keep polling. A single-instrument prepare
+     * is always terminal (`Completed`) — decide from
+     * `PrepareJobState.coverageRatio`, not by polling.
      *
      */
-    status: 'New' | 'Started' | 'Partial' | 'Completed' | 'Aborted' | 'Failed';
+    status: 'New' | 'Started' | 'Completed' | 'Aborted' | 'Failed';
     /**
      * Detailed status information, if available
      */
@@ -199,6 +199,62 @@ export type JobState = {
      * Timestamp for when the preparation finished
      */
     endTime?: string | null;
+};
+
+/**
+ * State of a single-instrument prepare job — the `JobState` shape plus a per-hour
+ * data-coverage summary. A single-instrument prepare is always terminal
+ * (`status: Completed`): the client decides what to do from `coverageRatio` (e.g.
+ * execute if it is at or above a chosen threshold) rather than polling for missing
+ * hours that may never arrive — a missing hour for one instrument usually means low
+ * activity, not missing data.
+ *
+ */
+export type PrepareJobState = JobState & {
+    /**
+     * Start of the available data range for the prepared instrument.
+     */
+    dataFrom?: string | null;
+    /**
+     * End of the available data range for the prepared instrument.
+     */
+    dataTo?: string | null;
+    /**
+     * `hoursWithData / totalHours` in `[0,1]` (`1.0` when `totalHours` is 0) — the
+     * fraction of hours in the requested range that have served data.
+     *
+     */
+    coverageRatio?: number;
+    /**
+     * Number of whole hours in the requested prepare range.
+     */
+    totalHours?: number;
+    /**
+     * Number of hours in the range that have data.
+     */
+    hoursWithData?: number;
+    /**
+     * One entry per hour in the range that has no data, with a rationale.
+     */
+    hoursWithoutData?: Array<{
+        /**
+         * The hour (UTC, hour-aligned) that has no data.
+         */
+        hour?: string;
+        /**
+         * Expected row count for the hour (currently always 0; reserved for
+         * future use). The rationale never depends on it.
+         *
+         */
+        expected?: number;
+        /**
+         * Why the hour has no data. `pending_conversion`: data for this hour is
+         * still being produced — a re-poll may fill it. `low_activity`: the
+         * instrument did not trade that hour. `unknown`: no data to classify by.
+         *
+         */
+        rationale?: 'pending_conversion' | 'low_activity' | 'unknown';
+    }>;
 };
 
 /**
@@ -792,7 +848,7 @@ export type GetPreparationStatusResponses = {
     /**
      * Current prepare job state
      */
-    200: JobState;
+    200: PrepareJobState;
 };
 
 export type GetPreparationStatusResponse = GetPreparationStatusResponses[keyof GetPreparationStatusResponses];
