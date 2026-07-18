@@ -237,6 +237,51 @@ export const DataSourceTypeSchema = {
     example: 'ticker'
 } as const;
 
+export const PrepareRequestSchema = {
+    type: 'object',
+    required: ['instrument', 'from', 'to'],
+    properties: {
+        instrument: {
+            '$ref': '#/components/schemas/Instrument'
+        },
+        from: {
+            type: 'string',
+            description: `Start date for the preparation process. Supports the following formats:
+- ISO-8601 (e.g. 2024-12-14T23:59:59Z)
+- ISO DATE (e.g. 2024-12-14)
+- BASIC ISO DATE (e.g., 20241214)
+`,
+            example: '2024-12-13T00:00:00Z'
+        },
+        to: {
+            type: 'string',
+            description: `End date for the preparation process. Supports the following formats:
+- ISO-8601 (e.g. 2024-12-14T23:59:59Z)
+- ISO DATE (e.g. 2024-12-14)
+- BASIC ISO DATE (e.g., 20241214)
+`,
+            example: '2024-12-14'
+        },
+        cadence: {
+            type: 'string',
+            description: `Output bar cadence for the prepared range. Defaults to the publisher's
+native cadence (\`1s\`); coarser cadences are produced on demand via
+resampling and stored alongside the native blob in cache. Coarser-than-
+source values must be exact multiples of the source cadence — invalid
+labels return \`400\`.
+`,
+            enum: ['1s', '5s', '1m', '5m', '15m', '1h', '4h', '1d'],
+            default: '1s'
+        }
+    },
+    example: {
+        instrument: 'BTC/USDT',
+        from: '2024-12-13T00:00:00Z',
+        to: '2024-12-14T00:00:00Z',
+        cadence: '1m'
+    }
+} as const;
+
 export const JobStateSchema = {
     type: 'object',
     description: 'Information about a single job',
@@ -368,6 +413,340 @@ instrument did not trade that hour. \`unknown\`: no data to classify by.
             }
         }
     ]
+} as const;
+
+export const SweepAxisSchema = {
+    description: 'A numeric range or an explicit list of values for one strategy property.',
+    oneOf: [
+        {
+            type: 'object',
+            required: ['from', 'to', 'step'],
+            additionalProperties: false,
+            properties: {
+                from: {
+                    type: 'number',
+                    format: 'double'
+                },
+                to: {
+                    type: 'number',
+                    format: 'double'
+                },
+                step: {
+                    type: 'number',
+                    format: 'double',
+                    exclusiveMinimum: 0
+                }
+            }
+        },
+        {
+            type: 'object',
+            required: ['values'],
+            additionalProperties: false,
+            properties: {
+                values: {
+                    type: 'array',
+                    minItems: 1,
+                    items: {
+                        oneOf: [
+                            {
+                                type: 'number'
+                            },
+                            {
+                                type: 'boolean'
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+    ]
+} as const;
+
+export const SweepSpecRequestSchema = {
+    type: 'object',
+    required: ['params'],
+    properties: {
+        sampler: {
+            type: 'string',
+            enum: ['grid', 'random', 'lhs'],
+            default: 'grid'
+        },
+        seed: {
+            type: 'integer',
+            format: 'int64',
+            minimum: -9007199254740991,
+            maximum: 9007199254740991,
+            description: `Reproducibility seed. If omitted, the server generates one with Java's
+\`L64X128MixRandom\` generator and returns the effective value. The range
+is limited to JavaScript-safe integers so generated clients can replay it exactly.
+`
+        },
+        samples: {
+            type: 'integer',
+            minimum: 1,
+            description: 'Number of samples for `random` and `lhs`; ignored by `grid`.'
+        },
+        objective: {
+            type: 'string',
+            enum: ['sharpe', 'sortino', 'pnl', 'maxdd'],
+            default: 'sharpe'
+        },
+        params: {
+            type: 'object',
+            minProperties: 1,
+            additionalProperties: {
+                '$ref': '#/components/schemas/SweepAxis'
+            }
+        }
+    },
+    example: {
+        sampler: 'lhs',
+        seed: 487221,
+        samples: 100,
+        objective: 'sharpe',
+        params: {
+            rsiPeriod: {
+                from: 7,
+                to: 28,
+                step: 1
+            },
+            useTrendFilter: {
+                values: [true, false]
+            }
+        }
+    }
+} as const;
+
+export const SweepBaseConfigSchema = {
+    type: 'object',
+    properties: {
+        initialFunding: {
+            type: 'number',
+            format: 'double',
+            exclusiveMinimum: 0,
+            default: 10000
+        },
+        feeRate: {
+            type: 'number',
+            format: 'double',
+            minimum: 0,
+            default: 0.001
+        },
+        buyFeeRate: {
+            type: 'number',
+            format: 'double',
+            minimum: 0
+        },
+        sellFeeRate: {
+            type: 'number',
+            format: 'double',
+            minimum: 0
+        },
+        feeLeg: {
+            type: 'string',
+            enum: ['RECEIVED', 'QUOTE', 'BASE'],
+            default: 'RECEIVED'
+        },
+        percentAmountToLock: {
+            type: 'number',
+            format: 'double',
+            exclusiveMinimum: 0,
+            maximum: 100
+        }
+    }
+} as const;
+
+export const ExecuteSweepRequestSchema = {
+    type: 'object',
+    required: ['strategyId', 'sweep'],
+    properties: {
+        strategyId: {
+            '$ref': '#/components/schemas/strategyId'
+        },
+        sweep: {
+            '$ref': '#/components/schemas/SweepSpecRequest'
+        },
+        baseConfig: {
+            '$ref': '#/components/schemas/SweepBaseConfig'
+        },
+        storeSignals: {
+            type: 'boolean',
+            default: false,
+            description: 'Store signals for every trial. Keep false for normal sweeps.'
+        },
+        shards: {
+            type: 'integer',
+            minimum: 0,
+            description: 'Requested horizontal shard count; 0 or omitted selects automatically.',
+            default: 0
+        },
+        minTradeFloor: {
+            type: 'integer',
+            minimum: 0,
+            default: 30,
+            description: 'Trials below this trade count are flagged but remain in the results.'
+        }
+    }
+} as const;
+
+export const ExecuteSweepAcceptedSchema = {
+    type: 'object',
+    required: ['sweepId', 'requestId', 'totalRuns', 'shards', 'seed', 'queued'],
+    properties: {
+        sweepId: {
+            type: 'string',
+            example: 'swp_95e47a7f0966ce11'
+        },
+        requestId: {
+            type: 'string'
+        },
+        totalRuns: {
+            type: 'integer',
+            minimum: 1
+        },
+        shards: {
+            type: 'integer',
+            minimum: 1
+        },
+        seed: {
+            type: 'integer',
+            format: 'int64',
+            minimum: -9007199254740991,
+            maximum: 9007199254740991,
+            description: 'Effective seed used to expand the sweep.'
+        },
+        queued: {
+            type: 'boolean',
+            description: 'False when an identical sweep already exists and was not enqueued again.'
+        }
+    }
+} as const;
+
+export const SweepProgressSchema = {
+    type: 'object',
+    required: ['done', 'total', 'aborted', 'shardCount', 'pendingShards'],
+    properties: {
+        done: {
+            type: 'integer',
+            format: 'int64'
+        },
+        total: {
+            type: 'integer'
+        },
+        aborted: {
+            type: 'integer',
+            format: 'int64'
+        },
+        shardCount: {
+            type: 'integer'
+        },
+        pendingShards: {
+            type: 'integer'
+        }
+    }
+} as const;
+
+export const SweepRunRowSchema = {
+    type: 'object',
+    required: ['runIx', 'params', 'sharpe', 'sortino', 'pnl', 'pnlPct', 'cagr', 'maxDdPct', 'trades', 'winRate', 'belowTradeFloor', 'aborted', 'runtimeMs'],
+    properties: {
+        runIx: {
+            type: 'integer',
+            minimum: 0,
+            description: 'Deterministic zero-based expansion index, stable across shards and ranking.'
+        },
+        rank: {
+            type: 'integer',
+            minimum: 1,
+            description: 'Present only in the `ranked` view.'
+        },
+        params: {
+            type: 'object',
+            additionalProperties: true
+        },
+        sharpe: {
+            type: 'number',
+            format: 'double'
+        },
+        sortino: {
+            type: 'number',
+            format: 'double'
+        },
+        pnl: {
+            type: 'number',
+            format: 'double',
+            description: 'Absolute net PnL in the output currency.'
+        },
+        pnlPct: {
+            type: 'number',
+            format: 'double'
+        },
+        cagr: {
+            type: 'number',
+            format: 'double'
+        },
+        maxDdPct: {
+            type: 'number',
+            format: 'double'
+        },
+        trades: {
+            type: 'integer',
+            format: 'int64'
+        },
+        winRate: {
+            type: 'number',
+            format: 'double'
+        },
+        belowTradeFloor: {
+            type: 'boolean'
+        },
+        aborted: {
+            type: 'boolean'
+        },
+        runtimeMs: {
+            type: 'integer',
+            format: 'int64'
+        }
+    }
+} as const;
+
+export const ExecuteSweepResultSchema = {
+    type: 'object',
+    required: ['sweepId', 'status', 'objective', 'order', 'progress', 'leaderboardSize', 'truncated', 'leaderboard'],
+    properties: {
+        sweepId: {
+            type: 'string'
+        },
+        status: {
+            type: 'string',
+            enum: ['RUNNING', 'COMPLETED', 'PARTIAL', 'CANCELLED']
+        },
+        objective: {
+            type: 'string',
+            enum: ['sharpe', 'sortino', 'pnl', 'maxdd']
+        },
+        order: {
+            type: 'string',
+            enum: ['ranked', 'natural']
+        },
+        progress: {
+            '$ref': '#/components/schemas/SweepProgress'
+        },
+        leaderboardSize: {
+            type: 'integer',
+            description: 'Total result rows currently available.'
+        },
+        truncated: {
+            type: 'boolean',
+            description: 'True only when the ranked view exceeds its display limit.'
+        },
+        leaderboard: {
+            type: 'array',
+            items: {
+                '$ref': '#/components/schemas/SweepRunRow'
+            }
+        }
+    }
 } as const;
 
 export const AcceptedJobSchema = {

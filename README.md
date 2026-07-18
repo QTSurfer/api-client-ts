@@ -26,7 +26,7 @@ npm install @qtsurfer/api-client
 ## Quick start
 
 ```ts
-import { client, getExchanges, prepareBacktesting } from '@qtsurfer/api-client';
+import { client, listExchanges, prepareBacktest } from '@qtsurfer/api-client';
 
 client.setConfig({
   baseUrl: 'https://api.qtsurfer.com/v1',
@@ -35,7 +35,7 @@ client.setConfig({
   },
 });
 
-const { data: exchanges, error } = await getExchanges();
+const { data: exchanges, error } = await listExchanges();
 if (error) throw error;
 
 console.log(exchanges);
@@ -44,12 +44,12 @@ console.log(exchanges);
 ### API key → JWT
 
 Every endpoint above expects a short-lived JWT in `Authorization: Bearer …`.
-Exchange a long-lived API key for one via `auth`:
+Exchange a long-lived API key for one via `authenticate`:
 
 ```ts
-import { auth } from '@qtsurfer/api-client';
+import { authenticate } from '@qtsurfer/api-client';
 
-const { data, error } = await auth({
+const { data, error } = await authenticate({
   baseUrl: 'https://api.qtsurfer.com/v1',
   headers: { 'X-API-Key': process.env.QTSURFER_APIKEY! },
 });
@@ -59,7 +59,7 @@ const { access_token: jwt } = data;  // feed to client.setConfig() for the rest
 ```
 
 For production use, prefer the [`@qtsurfer/sdk`](https://github.com/QTSurfer/sdk-ts)
-`auth(apikey)` helper — it returns a session that refreshes the JWT
+`authenticate(apikey)` helper — it returns a session that refreshes the JWT
 transparently, reads `QTSURFER_APIKEY` from the environment, and supports
 pluggable token stores so callers don't reinvent that plumbing.
 
@@ -69,18 +69,18 @@ All operations are exported as standalone functions; every operation accepts an 
 
 | Function | Method | Path | Purpose |
 | -------- | ------ | ---- | ------- |
-| `auth` | POST | `/auth/token` | Exchange an API key for a short-lived JWT |
-| `getExchanges` | GET | `/exchanges` | List available exchanges |
-| `getInstruments` | GET | `/exchange/{exchangeId}/instruments` | List instruments for an exchange |
-| `getExchangeTickersHour` | GET | `/exchange/{exchangeId}/tickers/{base}/{quote}` | Download one hour of tickers as Lastra/Parquet |
-| `getExchangeKlinesHour` | GET | `/exchange/{exchangeId}/klines/{base}/{quote}` | Download one hour of klines as Lastra/Parquet |
-| `postStrategy` | POST | `/strategy` | Compile a strategy |
-| `getStrategyStatus` | GET | `/strategy/{strategyId}` | Poll strategy compilation status |
-| `prepareBacktesting` | POST | `/backtesting/prepare` | Start a data preparation job |
-| `getPreparationStatus` | GET | `/backtesting/prepare/{jobId}` | Poll preparation status |
-| `executeBacktesting` | POST | `/backtesting/execute` | Start a backtest execution |
-| `cancelExecution` | POST | `/backtesting/execute/{jobId}/cancel` | Cancel a running execution |
-| `getExecutionResult` | GET | `/backtesting/execute/{jobId}` | Poll or fetch execution results |
+| `authenticate` | POST | `/auth/token` | Exchange an API key for a short-lived JWT |
+| `listExchanges` | GET | `/exchanges` | List available exchanges |
+| `listInstruments` | GET | `/exchange/{exchangeId}/instruments` | List instruments for an exchange |
+| `downloadTickers` | GET | `/exchange/{exchangeId}/tickers/{base}/{quote}` | Download one hour of tickers as Lastra/Parquet |
+| `downloadKlines` | GET | `/exchange/{exchangeId}/klines/{base}/{quote}` | Download one hour of klines as Lastra/Parquet |
+| `compileStrategy` | POST | `/strategy` | Compile a strategy |
+| `getStrategy` | GET | `/strategy/{strategyId}` | Poll strategy compilation status |
+| `prepareBacktest` | POST | `/backtesting/prepare` | Start a data preparation job |
+| `getPrepareStatus` | GET | `/backtesting/prepare/{jobId}` | Poll preparation status |
+| `executeBacktest` | POST | `/backtesting/execute` | Start a backtest execution |
+| `cancelBacktest` | POST | `/backtesting/execute/{jobId}/cancel` | Cancel a running execution |
+| `getBacktestResult` | GET | `/backtesting/execute/{jobId}` | Poll or fetch execution results |
 
 All generated types (`Exchange`, `InstrumentDetail`, `BacktestJobResult`, `PrepareJobState`, `ResultMap`, etc.) are re-exported from the root.
 
@@ -89,7 +89,7 @@ All generated types (`Exchange`, `InstrumentDetail`, `BacktestJobResult`, `Prepa
 The default client points to the staging server. Override via `setConfig` or by passing options inline:
 
 ```ts
-import { client, getExchanges } from '@qtsurfer/api-client';
+import { client, listExchanges } from '@qtsurfer/api-client';
 
 // Global
 client.setConfig({
@@ -97,7 +97,7 @@ client.setConfig({
 });
 
 // Per-call
-await getExchanges({
+await listExchanges({
   baseUrl: 'https://api.qtsurfer.com/v1',
   headers: { 'X-Request-Id': '...' },
 });
@@ -110,9 +110,9 @@ To build your own isolated client (e.g. per-tenant), use `createClient` from `@h
 Each function returns a discriminated union. Narrow via `error` before using `data`:
 
 ```ts
-const { data, error } = await prepareBacktesting({
+const { data, error } = await prepareBacktest({
   body: {
-    /* PrepareBacktestingRequest */
+    /* PrepareRequest */
   },
 });
 

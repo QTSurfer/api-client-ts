@@ -163,6 +163,35 @@ export type Exchange = {
  */
 export type DataSourceType = 'ticker';
 
+export type PrepareRequest = {
+    instrument: Instrument;
+    /**
+     * Start date for the preparation process. Supports the following formats:
+     * - ISO-8601 (e.g. 2024-12-14T23:59:59Z)
+     * - ISO DATE (e.g. 2024-12-14)
+     * - BASIC ISO DATE (e.g., 20241214)
+     *
+     */
+    from: string;
+    /**
+     * End date for the preparation process. Supports the following formats:
+     * - ISO-8601 (e.g. 2024-12-14T23:59:59Z)
+     * - ISO DATE (e.g. 2024-12-14)
+     * - BASIC ISO DATE (e.g., 20241214)
+     *
+     */
+    to: string;
+    /**
+     * Output bar cadence for the prepared range. Defaults to the publisher's
+     * native cadence (`1s`); coarser cadences are produced on demand via
+     * resampling and stored alongside the native blob in cache. Coarser-than-
+     * source values must be exact multiples of the source cadence — invalid
+     * labels return `400`.
+     *
+     */
+    cadence?: '1s' | '5s' | '1m' | '5m' | '15m' | '1h' | '4h' | '1d';
+};
+
 /**
  * Information about a single job
  */
@@ -255,6 +284,131 @@ export type PrepareJobState = JobState & {
          */
         rationale?: 'pending_conversion' | 'low_activity' | 'unknown';
     }>;
+};
+
+/**
+ * A numeric range or an explicit list of values for one strategy property.
+ */
+export type SweepAxis = {
+    from: number;
+    to: number;
+    step: number;
+} | {
+    values: Array<number | boolean>;
+};
+
+export type SweepSpecRequest = {
+    sampler?: 'grid' | 'random' | 'lhs';
+    /**
+     * Reproducibility seed. If omitted, the server generates one with Java's
+     * `L64X128MixRandom` generator and returns the effective value. The range
+     * is limited to JavaScript-safe integers so generated clients can replay it exactly.
+     *
+     */
+    seed?: number;
+    /**
+     * Number of samples for `random` and `lhs`; ignored by `grid`.
+     */
+    samples?: number;
+    objective?: 'sharpe' | 'sortino' | 'pnl' | 'maxdd';
+    params: {
+        [key: string]: SweepAxis;
+    };
+};
+
+export type SweepBaseConfig = {
+    initialFunding?: number;
+    feeRate?: number;
+    buyFeeRate?: number;
+    sellFeeRate?: number;
+    feeLeg?: 'RECEIVED' | 'QUOTE' | 'BASE';
+    percentAmountToLock?: number;
+};
+
+export type ExecuteSweepRequest = {
+    strategyId: StrategyId;
+    sweep: SweepSpecRequest;
+    baseConfig?: SweepBaseConfig;
+    /**
+     * Store signals for every trial. Keep false for normal sweeps.
+     */
+    storeSignals?: boolean;
+    /**
+     * Requested horizontal shard count; 0 or omitted selects automatically.
+     */
+    shards?: number;
+    /**
+     * Trials below this trade count are flagged but remain in the results.
+     */
+    minTradeFloor?: number;
+};
+
+export type ExecuteSweepAccepted = {
+    sweepId: string;
+    requestId: string;
+    totalRuns: number;
+    shards: number;
+    /**
+     * Effective seed used to expand the sweep.
+     */
+    seed: number;
+    /**
+     * False when an identical sweep already exists and was not enqueued again.
+     */
+    queued: boolean;
+};
+
+export type SweepProgress = {
+    done: number;
+    total: number;
+    aborted: number;
+    shardCount: number;
+    pendingShards: number;
+};
+
+export type SweepRunRow = {
+    /**
+     * Deterministic zero-based expansion index, stable across shards and ranking.
+     */
+    runIx: number;
+    /**
+     * Present only in the `ranked` view.
+     */
+    rank?: number;
+    params: {
+        [key: string]: unknown;
+    };
+    sharpe: number;
+    sortino: number;
+    /**
+     * Absolute net PnL in the output currency.
+     */
+    pnl: number;
+    pnlPct: number;
+    cagr: number;
+    maxDdPct: number;
+    trades: number;
+    winRate: number;
+    belowTradeFloor: boolean;
+    aborted: boolean;
+    runtimeMs: number;
+};
+
+export type ExecuteSweepResult = {
+    sweepId: string;
+    status: 'RUNNING' | 'COMPLETED' | 'PARTIAL' | 'CANCELLED';
+    objective: 'sharpe' | 'sortino' | 'pnl' | 'maxdd';
+    order: 'ranked' | 'natural';
+    progress: SweepProgress;
+    /**
+     * Total result rows currently available.
+     */
+    leaderboardSize: number;
+    /**
+     * True only when the ranked view exceeds its display limit.
+     */
+    truncated: boolean;
+    leaderboard: Array<SweepRunRow>;
 };
 
 /**
@@ -419,14 +573,14 @@ export type AuthTokenError = {
     message: string;
 };
 
-export type AuthData = {
+export type AuthenticateData = {
     body?: never;
     path?: never;
     query?: never;
     url: '/auth/token';
 };
 
-export type AuthErrors = {
+export type AuthenticateErrors = {
     /**
      * API key is invalid, revoked, or expired.
      */
@@ -437,34 +591,34 @@ export type AuthErrors = {
     429: unknown;
 };
 
-export type AuthError = AuthErrors[keyof AuthErrors];
+export type AuthenticateError = AuthenticateErrors[keyof AuthenticateErrors];
 
-export type AuthResponses = {
+export type AuthenticateResponses = {
     /**
      * API key accepted; JWT returned.
      */
     200: AuthTokenResponse;
 };
 
-export type AuthResponse = AuthResponses[keyof AuthResponses];
+export type AuthenticateResponse = AuthenticateResponses[keyof AuthenticateResponses];
 
-export type GetExchangesData = {
+export type ListExchangesData = {
     body?: never;
     path?: never;
     query?: never;
     url: '/exchanges';
 };
 
-export type GetExchangesResponses = {
+export type ListExchangesResponses = {
     /**
      * A JSON array of Exchanges
      */
     200: Array<Exchange>;
 };
 
-export type GetExchangesResponse = GetExchangesResponses[keyof GetExchangesResponses];
+export type ListExchangesResponse = ListExchangesResponses[keyof ListExchangesResponses];
 
-export type GetInstrumentsData = {
+export type ListInstrumentsData = {
     body?: never;
     path: {
         /**
@@ -476,25 +630,25 @@ export type GetInstrumentsData = {
     url: '/exchange/{exchangeId}/instruments';
 };
 
-export type GetInstrumentsErrors = {
+export type ListInstrumentsErrors = {
     /**
      * Exchange not found or instrument catalog not available
      */
     404: ResponseError;
 };
 
-export type GetInstrumentsError = GetInstrumentsErrors[keyof GetInstrumentsErrors];
+export type ListInstrumentsError = ListInstrumentsErrors[keyof ListInstrumentsErrors];
 
-export type GetInstrumentsResponses = {
+export type ListInstrumentsResponses = {
     /**
      * The default (spot) segment's instruments in `data`, `meta`, and HAL `_links` (self + spot/futures segment discovery)
      */
     200: InstrumentListResponse;
 };
 
-export type GetInstrumentsResponse = GetInstrumentsResponses[keyof GetInstrumentsResponses];
+export type ListInstrumentsResponse = ListInstrumentsResponses[keyof ListInstrumentsResponses];
 
-export type GetSegmentInstrumentsData = {
+export type ListSegmentInstrumentsData = {
     body?: never;
     path: {
         /**
@@ -510,25 +664,25 @@ export type GetSegmentInstrumentsData = {
     url: '/exchange/{exchangeId}/{segment}/instruments';
 };
 
-export type GetSegmentInstrumentsErrors = {
+export type ListSegmentInstrumentsErrors = {
     /**
      * Exchange, segment, or instrument catalog not found
      */
     404: ResponseError;
 };
 
-export type GetSegmentInstrumentsError = GetSegmentInstrumentsErrors[keyof GetSegmentInstrumentsErrors];
+export type ListSegmentInstrumentsError = ListSegmentInstrumentsErrors[keyof ListSegmentInstrumentsErrors];
 
-export type GetSegmentInstrumentsResponses = {
+export type ListSegmentInstrumentsResponses = {
     /**
      * An object with a `data` array of instrument details (each with per-data-type coverage) and a `meta` block
      */
     200: InstrumentListResponse;
 };
 
-export type GetSegmentInstrumentsResponse = GetSegmentInstrumentsResponses[keyof GetSegmentInstrumentsResponses];
+export type ListSegmentInstrumentsResponse = ListSegmentInstrumentsResponses[keyof ListSegmentInstrumentsResponses];
 
-export type GetExchangeTickersHourData = {
+export type DownloadTickersData = {
     body?: never;
     path: {
         /**
@@ -562,7 +716,7 @@ export type GetExchangeTickersHourData = {
     url: '/exchange/{exchangeId}/tickers/{base}/{quote}';
 };
 
-export type GetExchangeTickersHourErrors = {
+export type DownloadTickersErrors = {
     /**
      * Missing or malformed parameters (e.g. `hour` not `YYYY-MM-DDTHH`).
      */
@@ -577,9 +731,9 @@ export type GetExchangeTickersHourErrors = {
     500: ResponseError;
 };
 
-export type GetExchangeTickersHourError = GetExchangeTickersHourErrors[keyof GetExchangeTickersHourErrors];
+export type DownloadTickersError = DownloadTickersErrors[keyof DownloadTickersErrors];
 
-export type GetExchangeTickersHourResponses = {
+export type DownloadTickersResponses = {
     /**
      * One hour of tickers for the instrument. `Content-Type` is
      * `application/vnd.lastra` by default or
@@ -590,9 +744,9 @@ export type GetExchangeTickersHourResponses = {
     200: Blob | File;
 };
 
-export type GetExchangeTickersHourResponse = GetExchangeTickersHourResponses[keyof GetExchangeTickersHourResponses];
+export type DownloadTickersResponse = DownloadTickersResponses[keyof DownloadTickersResponses];
 
-export type GetExchangeKlinesHourData = {
+export type DownloadKlinesData = {
     body?: never;
     path: {
         /**
@@ -625,7 +779,7 @@ export type GetExchangeKlinesHourData = {
     url: '/exchange/{exchangeId}/klines/{base}/{quote}';
 };
 
-export type GetExchangeKlinesHourErrors = {
+export type DownloadKlinesErrors = {
     /**
      * Missing or malformed parameters (e.g. `hour` not `YYYY-MM-DDTHH`).
      */
@@ -640,9 +794,9 @@ export type GetExchangeKlinesHourErrors = {
     500: ResponseError;
 };
 
-export type GetExchangeKlinesHourError = GetExchangeKlinesHourErrors[keyof GetExchangeKlinesHourErrors];
+export type DownloadKlinesError = DownloadKlinesErrors[keyof DownloadKlinesErrors];
 
-export type GetExchangeKlinesHourResponses = {
+export type DownloadKlinesResponses = {
     /**
      * One hour of klines for the instrument. `Content-Type` is
      * `application/vnd.lastra` by default or
@@ -652,9 +806,9 @@ export type GetExchangeKlinesHourResponses = {
     200: Blob | File;
 };
 
-export type GetExchangeKlinesHourResponse = GetExchangeKlinesHourResponses[keyof GetExchangeKlinesHourResponses];
+export type DownloadKlinesResponse = DownloadKlinesResponses[keyof DownloadKlinesResponses];
 
-export type PostStrategyData = {
+export type CompileStrategyData = {
     /**
      * Raw strategy Java source code
      */
@@ -670,16 +824,16 @@ export type PostStrategyData = {
     url: '/strategy';
 };
 
-export type PostStrategyErrors = {
+export type CompileStrategyErrors = {
     /**
      * Invalid strategy (compilation error)
      */
     400: ResponseError;
 };
 
-export type PostStrategyError = PostStrategyErrors[keyof PostStrategyErrors];
+export type CompileStrategyError = CompileStrategyErrors[keyof CompileStrategyErrors];
 
-export type PostStrategyResponses = {
+export type CompileStrategyResponses = {
     /**
      * Strategy compiled successfully (sync mode)
      */
@@ -692,9 +846,9 @@ export type PostStrategyResponses = {
     202: AcceptedJob;
 };
 
-export type PostStrategyResponse = PostStrategyResponses[keyof PostStrategyResponses];
+export type CompileStrategyResponse = CompileStrategyResponses[keyof CompileStrategyResponses];
 
-export type GetStrategyStatusData = {
+export type GetStrategyData = {
     body?: never;
     path: {
         /**
@@ -706,16 +860,16 @@ export type GetStrategyStatusData = {
     url: '/strategy/{strategyId}';
 };
 
-export type GetStrategyStatusErrors = {
+export type GetStrategyErrors = {
     /**
      * Strategy compile job not found
      */
     404: ResponseError;
 };
 
-export type GetStrategyStatusError = GetStrategyStatusErrors[keyof GetStrategyStatusErrors];
+export type GetStrategyError = GetStrategyErrors[keyof GetStrategyErrors];
 
-export type GetStrategyStatusResponses = {
+export type GetStrategyResponses = {
     /**
      * Strategy compile state
      */
@@ -733,40 +887,13 @@ export type GetStrategyStatusResponses = {
     };
 };
 
-export type GetStrategyStatusResponse = GetStrategyStatusResponses[keyof GetStrategyStatusResponses];
+export type GetStrategyResponse = GetStrategyResponses[keyof GetStrategyResponses];
 
-export type PrepareBacktestingData = {
+export type PrepareBacktestData = {
     /**
      * The required data to prepare a backtesting
      */
-    body: {
-        instrument: Instrument;
-        /**
-         * Start date for the preparation process. Supports the following formats:
-         * - ISO-8601 (e.g. 2024-12-14T23:59:59Z)
-         * - ISO DATE (e.g. 2024-12-14)
-         * - BASIC ISO DATE (e.g., 20241214)
-         *
-         */
-        from: string;
-        /**
-         * End date for the preparation process. Supports the following formats:
-         * - ISO-8601 (e.g. 2024-12-14T23:59:59Z)
-         * - ISO DATE (e.g. 2024-12-14)
-         * - BASIC ISO DATE (e.g., 20241214)
-         *
-         */
-        to: string;
-        /**
-         * Output bar cadence for the prepared range. Defaults to the publisher's
-         * native cadence (`1s`); coarser cadences are produced on demand via
-         * resampling and stored alongside the native blob in cache. Coarser-than-
-         * source values must be exact multiples of the source cadence — invalid
-         * labels return `400`.
-         *
-         */
-        cadence?: '1s' | '5s' | '1m' | '5m' | '15m' | '1h' | '4h' | '1d';
-    };
+    body: PrepareRequest;
     path: {
         /**
          * ID of the exchange to prepare the backtesting for
@@ -781,7 +908,7 @@ export type PrepareBacktestingData = {
     url: '/backtest/{exchangeId}/{type}/prepare';
 };
 
-export type PrepareBacktestingErrors = {
+export type PrepareBacktestErrors = {
     /**
      * Invalid request or parameters. Also returned when `from` is older than the configured
      * lookback window or `to` is in the future.
@@ -800,18 +927,18 @@ export type PrepareBacktestingErrors = {
     429: ResponseError;
 };
 
-export type PrepareBacktestingError = PrepareBacktestingErrors[keyof PrepareBacktestingErrors];
+export type PrepareBacktestError = PrepareBacktestErrors[keyof PrepareBacktestErrors];
 
-export type PrepareBacktestingResponses = {
+export type PrepareBacktestResponses = {
     /**
      * Prepare task accepted (queued for processing)
      */
     202: AcceptedJob;
 };
 
-export type PrepareBacktestingResponse = PrepareBacktestingResponses[keyof PrepareBacktestingResponses];
+export type PrepareBacktestResponse = PrepareBacktestResponses[keyof PrepareBacktestResponses];
 
-export type GetPreparationStatusData = {
+export type GetPrepareStatusData = {
     body?: never;
     path: {
         /**
@@ -831,7 +958,7 @@ export type GetPreparationStatusData = {
     url: '/backtest/{exchangeId}/{type}/prepare/{jobId}';
 };
 
-export type GetPreparationStatusErrors = {
+export type GetPrepareStatusErrors = {
     /**
      * Invalid request or parameters
      */
@@ -842,18 +969,127 @@ export type GetPreparationStatusErrors = {
     404: ResponseError;
 };
 
-export type GetPreparationStatusError = GetPreparationStatusErrors[keyof GetPreparationStatusErrors];
+export type GetPrepareStatusError = GetPrepareStatusErrors[keyof GetPrepareStatusErrors];
 
-export type GetPreparationStatusResponses = {
+export type GetPrepareStatusResponses = {
     /**
      * Current prepare job state
      */
     200: PrepareJobState;
 };
 
-export type GetPreparationStatusResponse = GetPreparationStatusResponses[keyof GetPreparationStatusResponses];
+export type GetPrepareStatusResponse = GetPrepareStatusResponses[keyof GetPrepareStatusResponses];
 
-export type ExecuteBacktestingData = {
+export type ExecuteSweepData = {
+    body: ExecuteSweepRequest;
+    path: {
+        exchangeId: string;
+        type: DataSourceType;
+        /**
+         * Job ID returned by `POST /backtest/{exchangeId}/{type}/prepare`.
+         */
+        requestId: string;
+    };
+    query?: never;
+    url: '/backtest/{exchangeId}/{type}/executeSweep/{requestId}';
+};
+
+export type ExecuteSweepErrors = {
+    /**
+     * Invalid sweep specification or the expanded grid exceeds the server limit.
+     */
+    400: ResponseError;
+    /**
+     * Prepared request not found or expired.
+     */
+    404: ResponseError;
+    /**
+     * Sweep queue or user concurrency limit reached.
+     */
+    429: ResponseError;
+};
+
+export type ExecuteSweepError = ExecuteSweepErrors[keyof ExecuteSweepErrors];
+
+export type ExecuteSweepResponses = {
+    /**
+     * Sweep accepted. The effective seed is returned for reproducibility.
+     */
+    202: ExecuteSweepAccepted;
+};
+
+export type ExecuteSweepResponse = ExecuteSweepResponses[keyof ExecuteSweepResponses];
+
+export type CancelSweepData = {
+    body?: never;
+    path: {
+        exchangeId: string;
+        type: DataSourceType;
+        requestId: string;
+        sweepId: string;
+    };
+    query?: never;
+    url: '/backtest/{exchangeId}/{type}/executeSweep/{requestId}/{sweepId}';
+};
+
+export type CancelSweepErrors = {
+    /**
+     * Sweep not found.
+     */
+    404: ResponseError;
+};
+
+export type CancelSweepError = CancelSweepErrors[keyof CancelSweepErrors];
+
+export type CancelSweepResponses = {
+    /**
+     * Cancellation requested.
+     */
+    200: {
+        status: 'cancelling';
+        sweepId: string;
+    };
+};
+
+export type CancelSweepResponse = CancelSweepResponses[keyof CancelSweepResponses];
+
+export type GetSweepResultData = {
+    body?: never;
+    path: {
+        exchangeId: string;
+        type: DataSourceType;
+        requestId: string;
+        sweepId: string;
+    };
+    query?: {
+        objective?: 'sharpe' | 'sortino' | 'pnl' | 'maxdd';
+        /**
+         * `natural` is stable materialisation order; `ranked` is the display view.
+         */
+        order?: 'ranked' | 'natural';
+    };
+    url: '/backtest/{exchangeId}/{type}/executeSweep/{requestId}/{sweepId}';
+};
+
+export type GetSweepResultErrors = {
+    /**
+     * Sweep not found or expired.
+     */
+    404: ResponseError;
+};
+
+export type GetSweepResultError = GetSweepResultErrors[keyof GetSweepResultErrors];
+
+export type GetSweepResultResponses = {
+    /**
+     * Current sweep snapshot and all currently available result rows for the selected view.
+     */
+    200: ExecuteSweepResult;
+};
+
+export type GetSweepResultResponse = GetSweepResultResponses[keyof GetSweepResultResponses];
+
+export type ExecuteBacktestData = {
     /**
      * Execute task parameters
      */
@@ -884,7 +1120,7 @@ export type ExecuteBacktestingData = {
     url: '/backtest/{exchangeId}/{type}/execute';
 };
 
-export type ExecuteBacktestingErrors = {
+export type ExecuteBacktestErrors = {
     /**
      * Invalid request or parameters
      */
@@ -899,18 +1135,18 @@ export type ExecuteBacktestingErrors = {
     429: ResponseError;
 };
 
-export type ExecuteBacktestingError = ExecuteBacktestingErrors[keyof ExecuteBacktestingErrors];
+export type ExecuteBacktestError = ExecuteBacktestErrors[keyof ExecuteBacktestErrors];
 
-export type ExecuteBacktestingResponses = {
+export type ExecuteBacktestResponses = {
     /**
      * Execute task accepted (queued for processing)
      */
     202: AcceptedJob;
 };
 
-export type ExecuteBacktestingResponse = ExecuteBacktestingResponses[keyof ExecuteBacktestingResponses];
+export type ExecuteBacktestResponse = ExecuteBacktestResponses[keyof ExecuteBacktestResponses];
 
-export type CancelExecutionData = {
+export type CancelBacktestData = {
     body?: never;
     path: {
         exchangeId: string;
@@ -924,16 +1160,16 @@ export type CancelExecutionData = {
     url: '/backtest/{exchangeId}/{type}/execute/{jobId}';
 };
 
-export type CancelExecutionErrors = {
+export type CancelBacktestErrors = {
     /**
      * Execution not found
      */
     404: ResponseError;
 };
 
-export type CancelExecutionError = CancelExecutionErrors[keyof CancelExecutionErrors];
+export type CancelBacktestError = CancelBacktestErrors[keyof CancelBacktestErrors];
 
-export type CancelExecutionResponses = {
+export type CancelBacktestResponses = {
     /**
      * Cancellation request accepted
      */
@@ -943,9 +1179,9 @@ export type CancelExecutionResponses = {
     };
 };
 
-export type CancelExecutionResponse = CancelExecutionResponses[keyof CancelExecutionResponses];
+export type CancelBacktestResponse = CancelBacktestResponses[keyof CancelBacktestResponses];
 
-export type GetExecutionResultData = {
+export type GetBacktestResultData = {
     body?: never;
     path: {
         /**
@@ -965,7 +1201,7 @@ export type GetExecutionResultData = {
     url: '/backtest/{exchangeId}/{type}/execute/{jobId}';
 };
 
-export type GetExecutionResultErrors = {
+export type GetBacktestResultErrors = {
     /**
      * Invalid request or parameters
      */
@@ -976,16 +1212,16 @@ export type GetExecutionResultErrors = {
     404: ResponseError;
 };
 
-export type GetExecutionResultError = GetExecutionResultErrors[keyof GetExecutionResultErrors];
+export type GetBacktestResultError = GetBacktestResultErrors[keyof GetBacktestResultErrors];
 
-export type GetExecutionResultResponses = {
+export type GetBacktestResultResponses = {
     /**
      * Backtesting execution result
      */
     200: BacktestJobResult;
 };
 
-export type GetExecutionResultResponse = GetExecutionResultResponses[keyof GetExecutionResultResponses];
+export type GetBacktestResultResponse = GetBacktestResultResponses[keyof GetBacktestResultResponses];
 
 export type ClientOptions = {
     baseUrl: 'https://api.staging.qtsurfer.com/v1' | 'https://api.qtsurfer.com/v1' | (string & {});
