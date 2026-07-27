@@ -1219,6 +1219,21 @@ export type GetBacktestResultResponses = {
      * Backtesting execution result
      */
     200: BacktestJobResult;
+    /**
+     * The job is known but its result is not readable yet — keep polling.
+     *
+     * Returned in two situations, both of which mean "ask again", never "you are done":
+     * the job has not produced its result yet, or the job reached a terminal status while
+     * its stored result could not be read back. The response body is an empty object: it
+     * deliberately carries no `state`, so a client cannot mistake it for a finished result.
+     *
+     * Treat any `202` as a signal to continue the poll loop under your existing timeout.
+     * Never treat it as a terminal outcome.
+     *
+     */
+    202: {
+        [key: string]: never;
+    };
 };
 
 export type GetBacktestResultResponse = GetBacktestResultResponses[keyof GetBacktestResultResponses];

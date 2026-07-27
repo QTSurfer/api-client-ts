@@ -351,6 +351,10 @@ export const cancelBacktest = <ThrowOnError extends boolean = false>(options: Op
  * Retrieves the current state and results of the execute job identified by `jobId`.
  * Poll until `state.status` is `Completed`, `Failed`, or `Aborted`.
  *
+ * A `202` means the result is not readable yet — keep polling. It is never a terminal
+ * outcome, and it carries no `state`, so a poll loop that stops on a terminal status will
+ * not stop on it.
+ *
  */
 export const getBacktestResult = <ThrowOnError extends boolean = false>(options: Options<GetBacktestResultData, ThrowOnError>) => {
     return (options.client ?? _heyApiClient).get<GetBacktestResultResponse, GetBacktestResultError, ThrowOnError>({
