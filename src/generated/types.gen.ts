@@ -432,7 +432,7 @@ export type BacktestJobResult = {
 };
 
 /**
- * Execution result map. Always includes core fields (hostName, iops, strategyId, instrument). Yield metrics (pnlTotal, pnlTotalPercent, totalTrades, winRate, equityCurve, etc.) are present when the strategy emitted at least one trade. When signal storage is enabled, includes signal fields described below.
+ * Execution result map. Always includes core fields (hostName, iops, strategyId, instrument). Yield metrics (pnlTotal, pnlTotalPercent, totalTrades, winRate, equityCurve, etc.) are present when the strategy emitted at least one trade. When signal storage is enabled, includes signal fields described below. `notices` carries what the run had to say about itself, and is absent when it had nothing.
  */
 export type ResultMap = {
     /**
@@ -444,13 +444,36 @@ export type ResultMap = {
      */
     iops?: number;
     /**
-     * Identifier of the compiled strategy that produced this result
+     * **Not the `strategyId` you compiled with** — this is the execution context id,
+     * `strategy:<user>:<strategyId>`. The compiled strategy's id is the last `:`-separated
+     * segment; that, not this whole string, is what `GET /strategy/{strategyId}` takes.
+     *
+     * Take the segment after the last `:` rather than counting from the front: the shape has
+     * changed once already and callers that indexed a fixed position broke on it.
+     *
      */
     strategyId: string;
     /**
      * The instrument (currency pair) that was backtested
      */
     instrument: string;
+    /**
+     * Diagnostics the engine raised over this run, each with `provenance: execute`.
+     *
+     * **Absent means nothing was raised.** This is the one surface where silence is a real
+     * answer: the run happened, over your data, start to finish, and the engine found nothing
+     * worth saying. That is not true of the compile path, where an empty list only means a
+     * short synthetic series reached nothing — see `GET /strategy/{strategyId}`.
+     *
+     * Notices are raised on failed and aborted runs too, and those are the ones most worth
+     * reading: a run that produced no trades often did so for a reason stated here.
+     *
+     */
+    notices?: Array<Notice>;
+    /**
+     * How many notices were dropped past the cap of 50. Absent when none were. A large value usually means one fault repeating per instrument or per parameter vector rather than 50 distinct problems.
+     */
+    noticesTruncated?: number;
     /**
      * Total profit and loss in the output currency
      */
@@ -532,9 +555,112 @@ export type EquityPoint = {
 };
 
 /**
- * Unique identifier for a compiled strategy
+ * Unique identifier for a compiled strategy, derived from the source itself: the same code
+ * always yields the same id, for every caller, whatever its formatting. See
+ * `POST /strategy` for exactly which rewrites preserve it and which do not.
+ *
  */
 export type StrategyId = string;
+
+/**
+ * A diagnostic the engine raised while the strategy ran. Advisory: it describes something worth
+ * knowing about how the strategy is wired, not necessarily an error.
+ *
+ */
+export type Notice = {
+    /**
+     * Severity as the engine classified it.
+     */
+    level: string;
+    /**
+     * Stable identifier for the kind of finding; safe to match on.
+     */
+    code: string;
+    /**
+     * Human-readable explanation.
+     */
+    message: string;
+    /**
+     * Where it came from, which matters because the two silences differ: an empty list from a
+     * real run (`execute`) is a clean bill of health, while an empty list from
+     * `compile-dry-run` is only a lower bound over a bounded synthetic series.
+     *
+     */
+    provenance?: 'execute' | 'compile-dry-run';
+};
+
+/**
+ * What is known about a registered strategy: that it compiled, and what validating it found.
+ *
+ * **`validation: passed` does not mean the strategy is correct.** It means the class loaded and
+ * survived the first event of a short synthetic run — a floor, not a guarantee. When
+ * `dryRunIncomplete` is true it is a lower floor still, because the run did not finish.
+ *
+ */
+export type StrategyState = {
+    strategyId: StrategyId;
+    /**
+     * * `not_validated` — registered, never checked. `POST /strategy/{strategyId}/validate`
+     * checks it.
+     * * `pending` — a check was asked for and has not answered yet.
+     * * `passed` — the class loaded and survived its first event.
+     * * `failed` — it did not; `detail` says how.
+     *
+     */
+    validation: 'not_validated' | 'pending' | 'passed' | 'failed';
+    /**
+     * When the live compilation was produced.
+     */
+    compiledAt?: string;
+    /**
+     * The market data a strategy needs, read off the compiled class rather than off anything
+     * you sent — `TickerStrategy`, `KlineStrategy` and `FundingRateStrategy` each declare one,
+     * and a `MultiSourceStrategy` declares a set.
+     *
+     * **Absent is not "needs nothing".** A strategy always needs market data, so an absent
+     * field never means an empty requirement — it means the platform could not establish the
+     * answer without constructing your strategy, which it will not do to fill in a field.
+     * That happens for a `MultiSourceStrategy`, for a class that overrides
+     * `getMarketDataSource()`, and for anything registered before this field existed;
+     * re-registering the source fills it in.
+     *
+     */
+    requiredSources?: Array<'Ticker' | 'KLine' | 'FundingRate'>;
+    /**
+     * When the verdict was recorded. Absent until there is one.
+     */
+    validatedAt?: string;
+    /**
+     * Why validation failed, or why a queued check has not reported. Present on `failed`, and
+     * alongside `validationStalled`.
+     *
+     */
+    detail?: string;
+    /**
+     * What the run surfaced. An empty or absent list is not a clean bill of health when
+     * `dryRunIncomplete` is true — see that field.
+     *
+     */
+    notices?: Array<Notice>;
+    /**
+     * How many notices were dropped past the cap. Absent when none were.
+     */
+    noticesTruncated?: number;
+    /**
+     * The check did not finish its budget — it ran out of time, was refused because the
+     * platform was already holding too many unfinishable runs, or hit a failure attributable to
+     * the synthetic instrument rather than to your strategy. The verdict stands as far as it
+     * went; it simply reached less than a full run would.
+     *
+     */
+    dryRunIncomplete?: boolean;
+    /**
+     * A queued check has not reported for far longer than one takes. Nothing is disproved about
+     * the strategy — the check has not run. Stop waiting and re-request it later.
+     *
+     */
+    validationStalled?: boolean;
+};
 
 export type AuthTokenResponse = {
     /**
@@ -813,12 +939,6 @@ export type CompileStrategyData = {
      * Raw strategy Java source code
      */
     body: string;
-    headers?: {
-        /**
-         * When `true`, compile asynchronously and return `202` with a `jobId`.
-         */
-        'X-Compile-Async'?: boolean;
-    };
     path?: never;
     query?: never;
     url: '/strategy';
@@ -826,35 +946,76 @@ export type CompileStrategyData = {
 
 export type CompileStrategyErrors = {
     /**
-     * Invalid strategy (compilation error)
+     * The source is not valid Java; the message carries the compiler diagnostics. Nothing is
+     * registered, so there is no id to look up afterwards.
+     *
      */
     400: ResponseError;
+    /**
+     * Too many compilations in flight. Retry later.
+     */
+    429: ResponseError;
 };
 
 export type CompileStrategyError = CompileStrategyErrors[keyof CompileStrategyErrors];
 
 export type CompileStrategyResponses = {
     /**
-     * Strategy compiled successfully (sync mode)
+     * Compiled and registered
      */
     200: {
         strategyId: StrategyId;
     };
-    /**
-     * Compile task accepted (async mode — set `X-Compile-Async: true`)
-     */
-    202: AcceptedJob;
 };
 
 export type CompileStrategyResponse = CompileStrategyResponses[keyof CompileStrategyResponses];
+
+export type ValidateStrategyData = {
+    body?: never;
+    path: {
+        /**
+         * The id returned by `POST /strategy`
+         */
+        strategyId: StrategyId;
+    };
+    query?: never;
+    url: '/strategy/{strategyId}/validate';
+};
+
+export type ValidateStrategyErrors = {
+    /**
+     * No such registered strategy for this user
+     */
+    404: ResponseError;
+};
+
+export type ValidateStrategyError = ValidateStrategyErrors[keyof ValidateStrategyErrors];
+
+export type ValidateStrategyResponses = {
+    /**
+     * Already validated; the recorded verdict, unchanged
+     */
+    200: StrategyState;
+    /**
+     * Validation queued. Not a terminal outcome — poll `GET /strategy/{strategyId}` until
+     * `validation` leaves `pending`.
+     *
+     */
+    202: {
+        strategyId: StrategyId;
+        validation: 'pending';
+    };
+};
+
+export type ValidateStrategyResponse = ValidateStrategyResponses[keyof ValidateStrategyResponses];
 
 export type GetStrategyData = {
     body?: never;
     path: {
         /**
-         * The id returned by `POST /strategy` (sync) or the `jobId` returned in async mode
+         * The id returned by `POST /strategy`
          */
-        strategyId: string;
+        strategyId: StrategyId;
     };
     query?: never;
     url: '/strategy/{strategyId}';
@@ -862,7 +1023,7 @@ export type GetStrategyData = {
 
 export type GetStrategyErrors = {
     /**
-     * Strategy compile job not found
+     * No such registered strategy for this user
      */
     404: ResponseError;
 };
@@ -871,20 +1032,9 @@ export type GetStrategyError = GetStrategyErrors[keyof GetStrategyErrors];
 
 export type GetStrategyResponses = {
     /**
-     * Strategy compile state
+     * Strategy state
      */
-    200: {
-        /**
-         * Compile job id (only set in async mode)
-         */
-        jobId?: string;
-        status: 'New' | 'Started' | 'Completed' | 'Aborted' | 'Failed';
-        strategyId?: StrategyId;
-        /**
-         * Compilation error messages when `status` is `Failed`
-         */
-        statusDetail?: string | null;
-    };
+    200: StrategyState;
 };
 
 export type GetStrategyResponse = GetStrategyResponses[keyof GetStrategyResponses];

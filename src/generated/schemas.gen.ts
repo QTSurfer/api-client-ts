@@ -783,7 +783,7 @@ export const BacktestJobResultSchema = {
 
 export const ResultMapSchema = {
     type: 'object',
-    description: 'Execution result map. Always includes core fields (hostName, iops, strategyId, instrument). Yield metrics (pnlTotal, pnlTotalPercent, totalTrades, winRate, equityCurve, etc.) are present when the strategy emitted at least one trade. When signal storage is enabled, includes signal fields described below.',
+    description: 'Execution result map. Always includes core fields (hostName, iops, strategyId, instrument). Yield metrics (pnlTotal, pnlTotalPercent, totalTrades, winRate, equityCurve, etc.) are present when the strategy emitted at least one trade. When signal storage is enabled, includes signal fields described below. `notices` carries what the run had to say about itself, and is absent when it had nothing.',
     required: ['strategyId', 'instrument'],
     properties: {
         hostName: {
@@ -799,13 +799,40 @@ export const ResultMapSchema = {
         },
         strategyId: {
             type: 'string',
-            description: 'Identifier of the compiled strategy that produced this result',
-            example: 'strategy:00000000-0000-0000-0000-000000000000:ticker:2iyvtenlzh9dabqtxn7nbv'
+            description: `**Not the \`strategyId\` you compiled with** — this is the execution context id,
+\`strategy:<user>:<strategyId>\`. The compiled strategy's id is the last \`:\`-separated
+segment; that, not this whole string, is what \`GET /strategy/{strategyId}\` takes.
+
+Take the segment after the last \`:\` rather than counting from the front: the shape has
+changed once already and callers that indexed a fixed position broke on it.
+`,
+            example: 'strategy:00000000-0000-0000-0000-000000000000:2iyvtenlzh9dabqtxn7nbv'
         },
         instrument: {
             type: 'string',
             description: 'The instrument (currency pair) that was backtested',
             example: 'BTC/USDT'
+        },
+        notices: {
+            type: 'array',
+            description: `Diagnostics the engine raised over this run, each with \`provenance: execute\`.
+
+**Absent means nothing was raised.** This is the one surface where silence is a real
+answer: the run happened, over your data, start to finish, and the engine found nothing
+worth saying. That is not true of the compile path, where an empty list only means a
+short synthetic series reached nothing — see \`GET /strategy/{strategyId}\`.
+
+Notices are raised on failed and aborted runs too, and those are the ones most worth
+reading: a run that produced no trades often did so for a reason stated here.
+`,
+            items: {
+                '$ref': '#/components/schemas/Notice'
+            }
+        },
+        noticesTruncated: {
+            type: 'integer',
+            description: 'How many notices were dropped past the cap of 50. Absent when none were. A large value usually means one fault repeating per instrument or per parameter vector rather than 50 distinct problems.',
+            example: 3
         },
         pnlTotal: {
             type: 'number',
@@ -939,9 +966,151 @@ export const EquityPointSchema = {
 } as const;
 
 export const strategyIdSchema = {
-    description: 'Unique identifier for a compiled strategy',
+    description: `Unique identifier for a compiled strategy, derived from the source itself: the same code
+always yields the same id, for every caller, whatever its formatting. See
+\`POST /strategy\` for exactly which rewrites preserve it and which do not.
+`,
     type: 'string',
     example: '6bsh31ikwkuivhtgcoa6s4'
+} as const;
+
+export const NoticeSchema = {
+    type: 'object',
+    description: `A diagnostic the engine raised while the strategy ran. Advisory: it describes something worth
+knowing about how the strategy is wired, not necessarily an error.
+`,
+    required: ['level', 'code', 'message'],
+    properties: {
+        level: {
+            type: 'string',
+            description: 'Severity as the engine classified it.',
+            example: 'WARN'
+        },
+        code: {
+            type: 'string',
+            description: 'Stable identifier for the kind of finding; safe to match on.',
+            example: 'indicator.bar-data-on-ticker-path'
+        },
+        message: {
+            type: 'string',
+            description: 'Human-readable explanation.',
+            example: 'Indicator requires bar data but is on the ticker path'
+        },
+        provenance: {
+            type: 'string',
+            enum: ['execute', 'compile-dry-run'],
+            description: `Where it came from, which matters because the two silences differ: an empty list from a
+real run (\`execute\`) is a clean bill of health, while an empty list from
+\`compile-dry-run\` is only a lower bound over a bounded synthetic series.
+`,
+            example: 'compile-dry-run'
+        }
+    }
+} as const;
+
+export const StrategyStateSchema = {
+    type: 'object',
+    description: `What is known about a registered strategy: that it compiled, and what validating it found.
+
+**\`validation: passed\` does not mean the strategy is correct.** It means the class loaded and
+survived the first event of a short synthetic run — a floor, not a guarantee. When
+\`dryRunIncomplete\` is true it is a lower floor still, because the run did not finish.
+`,
+    required: ['strategyId', 'validation'],
+    properties: {
+        strategyId: {
+            '$ref': '#/components/schemas/strategyId'
+        },
+        validation: {
+            type: 'string',
+            enum: ['not_validated', 'pending', 'passed', 'failed'],
+            description: `* \`not_validated\` — registered, never checked. \`POST /strategy/{strategyId}/validate\`
+  checks it.
+* \`pending\` — a check was asked for and has not answered yet.
+* \`passed\` — the class loaded and survived its first event.
+* \`failed\` — it did not; \`detail\` says how.
+`,
+            example: 'passed'
+        },
+        compiledAt: {
+            type: 'string',
+            format: 'date-time',
+            description: 'When the live compilation was produced.'
+        },
+        requiredSources: {
+            type: 'array',
+            description: `The market data a strategy needs, read off the compiled class rather than off anything
+you sent — \`TickerStrategy\`, \`KlineStrategy\` and \`FundingRateStrategy\` each declare one,
+and a \`MultiSourceStrategy\` declares a set.
+
+**Absent is not "needs nothing".** A strategy always needs market data, so an absent
+field never means an empty requirement — it means the platform could not establish the
+answer without constructing your strategy, which it will not do to fill in a field.
+That happens for a \`MultiSourceStrategy\`, for a class that overrides
+\`getMarketDataSource()\`, and for anything registered before this field existed;
+re-registering the source fills it in.
+`,
+            items: {
+                type: 'string',
+                enum: ['Ticker', 'KLine', 'FundingRate']
+            },
+            example: ['Ticker']
+        },
+        validatedAt: {
+            type: 'string',
+            format: 'date-time',
+            description: 'When the verdict was recorded. Absent until there is one.'
+        },
+        detail: {
+            type: 'string',
+            description: `Why validation failed, or why a queued check has not reported. Present on \`failed\`, and
+alongside \`validationStalled\`.
+`
+        },
+        notices: {
+            type: 'array',
+            description: `What the run surfaced. An empty or absent list is not a clean bill of health when
+\`dryRunIncomplete\` is true — see that field.
+`,
+            items: {
+                '$ref': '#/components/schemas/Notice'
+            }
+        },
+        noticesTruncated: {
+            type: 'integer',
+            description: 'How many notices were dropped past the cap. Absent when none were.',
+            example: 3
+        },
+        dryRunIncomplete: {
+            type: 'boolean',
+            description: `The check did not finish its budget — it ran out of time, was refused because the
+platform was already holding too many unfinishable runs, or hit a failure attributable to
+the synthetic instrument rather than to your strategy. The verdict stands as far as it
+went; it simply reached less than a full run would.
+`
+        },
+        validationStalled: {
+            type: 'boolean',
+            description: `A queued check has not reported for far longer than one takes. Nothing is disproved about
+the strategy — the check has not run. Stop waiting and re-request it later.
+`
+        }
+    },
+    example: {
+        strategyId: '6bsh31ikwkuivhtgcoa6s4',
+        validation: 'passed',
+        compiledAt: '2026-08-04T16:23:04Z',
+        requiredSources: ['Ticker'],
+        validatedAt: '2026-08-04T16:24:11Z',
+        notices: [
+            {
+                level: 'WARN',
+                code: 'indicator.bar-data-on-ticker-path',
+                message: 'Indicator requires bar data but is on the ticker path',
+                provenance: 'compile-dry-run'
+            }
+        ]
+    }
 } as const;
 
 export const AuthTokenResponseSchema = {
