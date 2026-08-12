@@ -4,14 +4,14 @@
  * General response error
  */
 export type ResponseError = {
-    /**
-     * Status code
-     */
-    code: number;
-    /**
-     * Error description
-     */
-    message: string;
+  /**
+   * Status code
+   */
+  code: number;
+  /**
+   * Error description
+   */
+  message: string;
 };
 
 /**
@@ -23,211 +23,211 @@ export type Instrument = string;
  * HAL-style response envelope for the instruments listing
  */
 export type InstrumentListResponse = {
-    /**
-     * The list of instruments for the segment
-     */
-    data: Array<InstrumentDetail>;
-    meta: InstrumentListMeta;
-    _links: InstrumentLinks;
+  /**
+   * The list of instruments for the segment
+   */
+  data: Array<InstrumentDetail>;
+  meta: InstrumentListMeta;
+  _links: InstrumentLinks;
 };
 
 /**
  * Metadata describing the instruments listing
  */
 export type InstrumentListMeta = {
-    /**
-     * When this listing was last refreshed
-     */
-    updatedAt: string;
-    /**
-     * The exchange the instruments belong to
-     */
-    exchange: string;
-    /**
-     * The market segment served in `data`
-     */
-    segment: 'spot' | 'futures';
+  /**
+   * When this listing was last refreshed
+   */
+  updatedAt: string;
+  /**
+   * The exchange the instruments belong to
+   */
+  exchange: string;
+  /**
+   * The market segment served in `data`
+   */
+  segment: "spot" | "futures";
 };
 
 /**
  * HAL `_links` — segment discovery for the instruments listing
  */
 export type InstrumentLinks = {
-    /**
-     * Link to this listing
-     */
-    self: HalLink;
-    /**
-     * Link to the spot instruments listing. Present when the exchange has a spot segment.
-     */
-    spot?: HalLink;
-    /**
-     * Link to the futures instruments listing. Present only when the exchange has a futures segment.
-     */
-    futures?: HalLink;
+  /**
+   * Link to this listing
+   */
+  self: HalLink;
+  /**
+   * Link to the spot instruments listing. Present when the exchange has a spot segment.
+   */
+  spot?: HalLink;
+  /**
+   * Link to the futures instruments listing. Present only when the exchange has a futures segment.
+   */
+  futures?: HalLink;
 };
 
 /**
  * A HAL link object (Hypertext Application Language)
  */
 export type HalLink = {
-    /**
-     * The link target as an absolute-path URI reference (resolve against the API base). A URI Template (RFC 6570) when `templated` is true.
-     */
-    href: string;
-    /**
-     * True when `href` is an RFC 6570 URI Template.
-     */
-    templated?: boolean;
+  /**
+   * The link target as an absolute-path URI reference (resolve against the API base). A URI Template (RFC 6570) when `templated` is true.
+   */
+  href: string;
+  /**
+   * True when `href` is an RFC 6570 URI Template.
+   */
+  templated?: boolean;
 };
 
 /**
  * Exchange instrument with per-data-type coverage and market info
  */
 export type InstrumentDetail = {
-    /**
-     * Instrument identifier (e.g. currency pair)
-     */
-    id: string;
-    /**
-     * Base currency
-     */
-    base: string;
-    /**
-     * Quote currency
-     */
-    quote: string;
-    coverage?: InstrumentCoverage;
-    /**
-     * Last traded price
-     */
-    lastPrice?: number;
-    /**
-     * Trading volume in the last 24 hours (in quote currency)
-     */
-    volume24h?: number;
+  /**
+   * Instrument identifier (e.g. currency pair)
+   */
+  id: string;
+  /**
+   * Base currency
+   */
+  base: string;
+  /**
+   * Quote currency
+   */
+  quote: string;
+  coverage?: InstrumentCoverage;
+  /**
+   * Last traded price
+   */
+  lastPrice?: number;
+  /**
+   * Trading volume in the last 24 hours (in quote currency)
+   */
+  volume24h?: number;
 };
 
 /**
  * Time coverage of available data for this instrument, per data type
  */
 export type InstrumentCoverage = {
-    /**
-     * Coverage of ticker data
-     */
-    tickers?: CoverageWindow;
-    /**
-     * Coverage of kline (candlestick) data
-     */
-    klines?: CoverageWindow;
+  /**
+   * Coverage of ticker data
+   */
+  tickers?: CoverageWindow;
+  /**
+   * Coverage of kline (candlestick) data
+   */
+  klines?: CoverageWindow;
 };
 
 /**
  * The time range of available data for a single data type
  */
 export type CoverageWindow = {
-    /**
-     * Earliest timestamp with data available
-     */
-    from?: string;
-    /**
-     * Latest timestamp with data available
-     */
-    to?: string;
-    /**
-     * If the instrument stopped producing this data type (delisted/inactive), the timestamp it went inactive. Optional — omitted while the instrument is active.
-     */
-    inactiveSince?: string;
+  /**
+   * Earliest timestamp with data available
+   */
+  from?: string;
+  /**
+   * Latest timestamp with data available
+   */
+  to?: string;
+  /**
+   * If the instrument stopped producing this data type (delisted/inactive), the timestamp it went inactive. Optional — omitted while the instrument is active.
+   */
+  inactiveSince?: string;
 };
 
 /**
  * Exchange service provider
  */
 export type Exchange = {
-    /**
-     * Unique identifier for the exchange
-     */
-    id: string;
-    /**
-     * Name of the exchange
-     */
-    name: string;
-    /**
-     * Description of the exchange
-     */
-    description?: string;
+  /**
+   * Unique identifier for the exchange
+   */
+  id: string;
+  /**
+   * Name of the exchange
+   */
+  name: string;
+  /**
+   * Description of the exchange
+   */
+  description?: string;
 };
 
 /**
  * Managed exchange data sources available for backtesting.
  */
-export type DataSourceType = 'ticker';
+export type DataSourceType = "ticker";
 
 export type PrepareRequest = {
-    instrument: Instrument;
-    /**
-     * Start date for the preparation process. Supports the following formats:
-     * - ISO-8601 (e.g. 2024-12-14T23:59:59Z)
-     * - ISO DATE (e.g. 2024-12-14)
-     * - BASIC ISO DATE (e.g., 20241214)
-     *
-     */
-    from: string;
-    /**
-     * End date for the preparation process. Supports the following formats:
-     * - ISO-8601 (e.g. 2024-12-14T23:59:59Z)
-     * - ISO DATE (e.g. 2024-12-14)
-     * - BASIC ISO DATE (e.g., 20241214)
-     *
-     */
-    to: string;
-    /**
-     * Output bar cadence for the prepared range. Defaults to the publisher's
-     * native cadence (`1s`); coarser cadences are produced on demand via
-     * resampling and stored alongside the native blob in cache. Coarser-than-
-     * source values must be exact multiples of the source cadence — invalid
-     * labels return `400`.
-     *
-     */
-    cadence?: '1s' | '5s' | '1m' | '5m' | '15m' | '1h' | '4h' | '1d';
+  instrument: Instrument;
+  /**
+   * Start date for the preparation process. Supports the following formats:
+   * - ISO-8601 (e.g. 2024-12-14T23:59:59Z)
+   * - ISO DATE (e.g. 2024-12-14)
+   * - BASIC ISO DATE (e.g., 20241214)
+   *
+   */
+  from: string;
+  /**
+   * End date for the preparation process. Supports the following formats:
+   * - ISO-8601 (e.g. 2024-12-14T23:59:59Z)
+   * - ISO DATE (e.g. 2024-12-14)
+   * - BASIC ISO DATE (e.g., 20241214)
+   *
+   */
+  to: string;
+  /**
+   * Output bar cadence for the prepared range. Defaults to the publisher's
+   * native cadence (`1s`); coarser cadences are produced on demand via
+   * resampling and stored alongside the native blob in cache. Coarser-than-
+   * source values must be exact multiples of the source cadence — invalid
+   * labels return `400`.
+   *
+   */
+  cadence?: "1s" | "5s" | "1m" | "5m" | "15m" | "1h" | "4h" | "1d";
 };
 
 /**
  * Information about a single job
  */
 export type JobState = {
-    /**
-     * Opaque context identifier for the job
-     */
-    contextId: string;
-    /**
-     * Current status of the job. Treat `Completed | Aborted | Failed` as
-     * terminal; `New | Started` mean keep polling. A single-instrument prepare
-     * is always terminal (`Completed`) — decide from
-     * `PrepareJobState.coverageRatio`, not by polling.
-     *
-     */
-    status: 'New' | 'Started' | 'Completed' | 'Aborted' | 'Failed';
-    /**
-     * Detailed status information, if available
-     */
-    statusDetail?: string | null;
-    /**
-     * Total size of the data being prepared
-     */
-    size: number;
-    /**
-     * The amount of data processed so far
-     */
-    completed: number;
-    /**
-     * Timestamp for when the preparation started
-     */
-    startTime?: string | null;
-    /**
-     * Timestamp for when the preparation finished
-     */
-    endTime?: string | null;
+  /**
+   * Opaque context identifier for the job
+   */
+  contextId: string;
+  /**
+   * Current status of the job. Treat `Completed | Aborted | Failed` as
+   * terminal; `New | Started` mean keep polling. A single-instrument prepare
+   * is always terminal (`Completed`) — decide from
+   * `PrepareJobState.coverageRatio`, not by polling.
+   *
+   */
+  status: "New" | "Started" | "Completed" | "Aborted" | "Failed";
+  /**
+   * Detailed status information, if available
+   */
+  statusDetail?: string | null;
+  /**
+   * Total size of the data being prepared
+   */
+  size: number;
+  /**
+   * The amount of data processed so far
+   */
+  completed: number;
+  /**
+   * Timestamp for when the preparation started
+   */
+  startTime?: string | null;
+  /**
+   * Timestamp for when the preparation finished
+   */
+  endTime?: string | null;
 };
 
 /**
@@ -240,175 +240,381 @@ export type JobState = {
  *
  */
 export type PrepareJobState = JobState & {
+  /**
+   * Start of the available data range for the prepared instrument.
+   */
+  dataFrom?: string | null;
+  /**
+   * End of the available data range for the prepared instrument.
+   */
+  dataTo?: string | null;
+  /**
+   * `hoursWithData / totalHours` in `[0,1]` (`1.0` when `totalHours` is 0) — the
+   * fraction of hours in the requested range that have served data.
+   *
+   */
+  coverageRatio?: number;
+  /**
+   * Number of whole hours in the requested prepare range.
+   */
+  totalHours?: number;
+  /**
+   * Number of hours in the range that have data.
+   */
+  hoursWithData?: number;
+  /**
+   * One entry per hour in the range that has no data, with a rationale.
+   */
+  hoursWithoutData?: Array<{
     /**
-     * Start of the available data range for the prepared instrument.
+     * The hour (UTC, hour-aligned) that has no data.
      */
-    dataFrom?: string | null;
+    hour?: string;
     /**
-     * End of the available data range for the prepared instrument.
-     */
-    dataTo?: string | null;
-    /**
-     * `hoursWithData / totalHours` in `[0,1]` (`1.0` when `totalHours` is 0) — the
-     * fraction of hours in the requested range that have served data.
+     * Expected row count for the hour (currently always 0; reserved for
+     * future use). The rationale never depends on it.
      *
      */
-    coverageRatio?: number;
+    expected?: number;
     /**
-     * Number of whole hours in the requested prepare range.
+     * Why the hour has no data. `pending_conversion`: data for this hour is
+     * still being produced — a re-poll may fill it. `low_activity`: the
+     * instrument did not trade that hour. `unknown`: no data to classify by.
+     *
      */
-    totalHours?: number;
-    /**
-     * Number of hours in the range that have data.
-     */
-    hoursWithData?: number;
-    /**
-     * One entry per hour in the range that has no data, with a rationale.
-     */
-    hoursWithoutData?: Array<{
-        /**
-         * The hour (UTC, hour-aligned) that has no data.
-         */
-        hour?: string;
-        /**
-         * Expected row count for the hour (currently always 0; reserved for
-         * future use). The rationale never depends on it.
-         *
-         */
-        expected?: number;
-        /**
-         * Why the hour has no data. `pending_conversion`: data for this hour is
-         * still being produced — a re-poll may fill it. `low_activity`: the
-         * instrument did not trade that hour. `unknown`: no data to classify by.
-         *
-         */
-        rationale?: 'pending_conversion' | 'low_activity' | 'unknown';
-    }>;
+    rationale?: "pending_conversion" | "low_activity" | "unknown";
+  }>;
 };
 
 /**
  * A numeric range or an explicit list of values for one strategy property.
  */
-export type SweepAxis = {
-    from: number;
-    to: number;
-    step: number;
-} | {
-    values: Array<number | boolean>;
-};
+export type SweepAxis =
+  | {
+      from: number;
+      to: number;
+      step: number;
+    }
+  | {
+      values: Array<number | boolean>;
+    };
 
 export type SweepSpecRequest = {
-    sampler?: 'grid' | 'random' | 'lhs';
-    /**
-     * Reproducibility seed. If omitted, the server generates one with Java's
-     * `L64X128MixRandom` generator and returns the effective value. The range
-     * is limited to JavaScript-safe integers so generated clients can replay it exactly.
-     *
-     */
-    seed?: number;
-    /**
-     * Number of samples for `random` and `lhs`; ignored by `grid`.
-     */
-    samples?: number;
-    objective?: 'sharpe' | 'sortino' | 'pnl' | 'maxdd';
-    params: {
-        [key: string]: SweepAxis;
-    };
+  sampler?: "grid" | "random" | "lhs";
+  /**
+   * Reproducibility seed. If omitted, the server generates one with Java's
+   * `L64X128MixRandom` generator and returns the effective value. The range
+   * is limited to JavaScript-safe integers so generated clients can replay it exactly.
+   *
+   */
+  seed?: number;
+  /**
+   * Number of samples for `random` and `lhs`; ignored by `grid`.
+   */
+  samples?: number;
+  objective?: "sharpe" | "sortino" | "pnl" | "maxdd";
+  params: {
+    [key: string]: SweepAxis;
+  };
 };
 
 export type SweepBaseConfig = {
-    initialFunding?: number;
-    feeRate?: number;
-    buyFeeRate?: number;
-    sellFeeRate?: number;
-    feeLeg?: 'RECEIVED' | 'QUOTE' | 'BASE';
-    percentAmountToLock?: number;
+  initialFunding?: number;
+  feeRate?: number;
+  buyFeeRate?: number;
+  sellFeeRate?: number;
+  feeLeg?: "RECEIVED" | "QUOTE" | "BASE";
+  percentAmountToLock?: number;
 };
 
 export type ExecuteSweepRequest = {
-    strategyId: StrategyId;
-    sweep: SweepSpecRequest;
-    baseConfig?: SweepBaseConfig;
-    /**
-     * Store signals for every trial. Keep false for normal sweeps.
-     */
-    storeSignals?: boolean;
-    /**
-     * Requested horizontal shard count; 0 or omitted selects automatically.
-     */
-    shards?: number;
-    /**
-     * Trials below this trade count are flagged but remain in the results.
-     */
-    minTradeFloor?: number;
+  strategyId: StrategyId;
+  sweep: SweepSpecRequest;
+  baseConfig?: SweepBaseConfig;
+  /**
+   * Store signals for every trial. Keep false for normal sweeps.
+   */
+  storeSignals?: boolean;
+  /**
+   * Requested horizontal shard count; 0 or omitted selects automatically.
+   */
+  shards?: number;
+  /**
+   * Trials below this trade count are flagged but remain in the results.
+   */
+  minTradeFloor?: number;
+  walkForward?: WalkForwardRequest;
+};
+
+/**
+ * Opt in to walk-forward validation. Present, the sweep runs as F sequential folds and the result gains a `walkForward` section; absent, nothing about the sweep changes. Two requests that differ only in this block are two different sweeps and do not deduplicate against each other.
+ */
+export type WalkForwardRequest = {
+  /**
+   * How many sequential optimize-then-score windows to run. Two is the minimum for a reason, and it is structural rather than a tuning choice: parameter drift is measured between consecutive fold winners, and a single fold — one train/test split with no sequence — has no consecutive pair to compare, so it would report the strongest possible stability having measured nothing.
+   * The upper bound is a server setting (12 by default) and is deliberately not pinned here, since a spec that hardcodes a tunable limit lies the day it is raised. Exceeding it, or exceeding the sweep budget once multiplied by the grid size, is a 400.
+   */
+  folds: number;
+  /**
+   * Share of the session each fold spends optimizing; the remainder is where its winner is scored. Lower values leave more data to be scored on and, on short sessions, are also what lets the requested fold count tile the data at all.
+   */
+  inSamplePct?: number;
 };
 
 export type ExecuteSweepAccepted = {
-    sweepId: string;
-    requestId: string;
-    totalRuns: number;
-    shards: number;
-    /**
-     * Effective seed used to expand the sweep.
-     */
-    seed: number;
-    /**
-     * False when an identical sweep already exists and was not enqueued again.
-     */
-    queued: boolean;
+  sweepId: string;
+  requestId: string;
+  totalRuns: number;
+  shards: number;
+  /**
+   * Effective seed used to expand the sweep.
+   */
+  seed: number;
+  /**
+   * False when an identical sweep already exists and was not enqueued again.
+   */
+  queued: boolean;
+  walkForward?: WalkForwardAccepted;
 };
 
+/**
+ * Echo of the accepted walk-forward configuration, present only when the submit carried one. `inSamplePct` is the resolved value, so a request that omitted it can see what it got.
+ */
+export type WalkForwardAccepted = {
+  folds: number;
+  inSamplePct: number;
+  /**
+   * What this sweep actually costs, `folds × (grid size + 1)` — the in-sample runs for every fold plus each fold's one out-of-sample run. Deliberately distinct from the top-level `totalRuns`, which stays the size of the grid that was submitted.
+   */
+  totalRuns: number;
+};
+
+/**
+ * How far along a sweep is, and — when the sweep is still running — enough to tell a healthy one from a stuck one. The counts partition the shards (or, for a walk-forward sweep, the folds): every unit is either finished, failed, waiting to be retried, or not yet started.
+ */
 export type SweepProgress = {
-    done: number;
-    total: number;
-    aborted: number;
-    shardCount: number;
-    pendingShards: number;
+  done: number;
+  total: number;
+  /**
+   * Individual runs that executed and aborted. A row-level count: a shard that fails before producing any rows leaves this at 0, which is why `failedShards` exists alongside it.
+   */
+  aborted: number;
+  shardCount: number;
+  pendingShards: number;
+  /**
+   * Shards (or folds) that failed and will not be retried. Distinct from `aborted`: this counts whole units that never reported, not runs that ran badly.
+   */
+  failedShards: number;
+  /**
+   * Units whose last attempt failed on something transient — an I/O error, a worker that died mid-read — and which are queued to be attempted again. Not counted as failures, because they have not failed yet; a sweep with a non-zero value here is still expected to complete.
+   */
+  retrying: number;
+  /**
+   * Units that have not reported anything yet. Covers both work still queued behind other work and work claimed by a worker that stopped before it began, which is why a sweep with a persistent value here and a rising `stalledSeconds` is worth looking at.
+   */
+  notStarted: number;
+  /**
+   * Seconds since anything last advanced. Omitted on a finished sweep, where it would only measure how long ago it finished, and on sweeps submitted before this field existed.
+   */
+  stalledSeconds?: number;
+  /**
+   * Rough seconds remaining, extrapolated from the rate observed so far and assuming nothing else competes for workers. Runs conservative in practice — it has measured 2–5× long when a sweep spent part of its life waiting to be retried, since that wait dilutes the observed rate. **Omitted, never zero, when it cannot be computed**: a sweep with nothing finished yet has no rate to extrapolate from, and a zero would read as "about to finish". Excludes queue wait entirely; `retrying` and `stalledSeconds` are where that shows up.
+   */
+  etaSeconds?: number;
 };
 
 export type SweepRunRow = {
-    /**
-     * Deterministic zero-based expansion index, stable across shards and ranking.
-     */
-    runIx: number;
-    /**
-     * Present only in the `ranked` view.
-     */
-    rank?: number;
-    params: {
-        [key: string]: unknown;
-    };
-    sharpe: number;
-    sortino: number;
-    /**
-     * Absolute net PnL in the output currency.
-     */
-    pnl: number;
-    pnlPct: number;
-    cagr: number;
-    maxDdPct: number;
-    trades: number;
-    winRate: number;
-    belowTradeFloor: boolean;
-    aborted: boolean;
-    runtimeMs: number;
+  /**
+   * Deterministic zero-based expansion index, stable across shards and ranking.
+   */
+  runIx: number;
+  /**
+   * Present only in the `ranked` view.
+   */
+  rank?: number;
+  /**
+   * The objective of the worst run in this point's immediate neighbourhood — how well the region around it holds up, not how well it scored itself. Present only in the `ranked` view when plateau ranking applied. Always read together with `neighbourCount`.
+   */
+  plateauScore?: number;
+  /**
+   * How many neighbouring parameter points backed the `plateauScore`. Zero means the point had no neighbours in the grid, so its score is unevidenced rather than confirmed — the value alone cannot be distinguished from a genuinely robust one.
+   */
+  neighbourCount?: number;
+  /**
+   * Probability that this run's Sharpe reflects real edge rather than the best draw from however many parameter vectors were tried. Above ~0.95 the result survives the multiple-testing correction; near 0.5 or below it is indistinguishable from the best of a pile of coin flips. Absent on aborted runs, and on sweeps with too few trials to establish any dispersion to deflate against.
+   */
+  deflatedSharpe?: number;
+  params: {
+    [key: string]: unknown;
+  };
+  sharpe: number;
+  sortino: number;
+  /**
+   * Absolute net PnL in the output currency.
+   */
+  pnl: number;
+  pnlPct: number;
+  cagr: number;
+  maxDdPct: number;
+  trades: number;
+  winRate: number;
+  belowTradeFloor: boolean;
+  aborted: boolean;
+  runtimeMs: number;
+};
+
+/**
+ * Sensitivity aggregates over a sweep's stored rows. Marginals are always complete; heatmaps may be capped, in which case `heatmapsTruncated` is true.
+ */
+export type SweepSensitivity = {
+  sweepId?: string;
+  status?: "RUNNING" | "COMPLETED" | "PARTIAL" | "CANCELLED";
+  objective?: "sharpe" | "sortino" | "pnl" | "maxdd";
+  /**
+   * Rows available when this was computed. Grows while a sweep is still running.
+   */
+  rowsAnalysed?: number;
+  marginals?: Array<SweepMarginal>;
+  heatmaps?: Array<SweepHeatmap>;
+  /**
+   * True when at least one two-parameter surface was left out to stay inside the response budget. Told explicitly because a silently short list would read as "these are all the interactions", which is the wrong thing to conclude from a sensitivity view.
+   */
+  heatmapsTruncated?: boolean;
+};
+
+/**
+ * One axis, with every other axis collapsed away.
+ */
+export type SweepMarginal = {
+  param?: string;
+  points?: Array<SweepMarginalPoint>;
+};
+
+/**
+ * How the objective behaved at one value of one axis. `best` and `mean` disagreeing is informative rather than noise: a high `best` with a poor `mean` marks a value that only works alongside particular settings of the other axes.
+ */
+export type SweepMarginalPoint = {
+  /**
+   * The axis value, as it appears in a run's parameters.
+   */
+  value?: unknown;
+  /**
+   * Non-aborted runs that used this value.
+   */
+  count?: number;
+  best?: number;
+  mean?: number;
+  worst?: number;
+};
+
+/**
+ * The surface for one pair of axes, with all others collapsed away.
+ */
+export type SweepHeatmap = {
+  paramA?: string;
+  paramB?: string;
+  cells?: Array<SweepHeatmapCell>;
+};
+
+export type SweepHeatmapCell = {
+  valueA?: unknown;
+  valueB?: unknown;
+  count?: number;
+  best?: number;
+  mean?: number;
 };
 
 export type ExecuteSweepResult = {
-    sweepId: string;
-    status: 'RUNNING' | 'COMPLETED' | 'PARTIAL' | 'CANCELLED';
-    objective: 'sharpe' | 'sortino' | 'pnl' | 'maxdd';
-    order: 'ranked' | 'natural';
-    progress: SweepProgress;
-    /**
-     * Total result rows currently available.
-     */
-    leaderboardSize: number;
-    /**
-     * True only when the ranked view exceeds its display limit.
-     */
-    truncated: boolean;
-    leaderboard: Array<SweepRunRow>;
+  sweepId: string;
+  status: "RUNNING" | "COMPLETED" | "PARTIAL" | "CANCELLED";
+  objective: "sharpe" | "sortino" | "pnl" | "maxdd";
+  order: "ranked" | "natural";
+  /**
+   * Which ordering was actually applied, which is not always the one requested: a sweep with no stored parameter grid cannot be plateau-ranked and falls back to `raw`. Always `raw` when `order=natural`.
+   */
+  ranking?: "plateau" | "raw";
+  /**
+   * Probability of backtest overfitting for the sweep as a whole, by combinatorially symmetric cross-validation: how often the configuration that won in-sample lands below median out-of-sample. Above ~0.5 the sweep is selecting noise, whatever its top row says. Computed once when the last shard finishes, so it is absent while the sweep is still running and on sweeps too small for the statistic to mean anything.
+   */
+  pbo?: number;
+  /**
+   * How many train/test splits the `pbo` figure was averaged over.
+   */
+  pboSplits?: number;
+  progress: SweepProgress;
+  /**
+   * Total result rows currently available.
+   */
+  leaderboardSize: number;
+  /**
+   * True only when the ranked view exceeds its display limit.
+   */
+  truncated: boolean;
+  leaderboard: Array<SweepRunRow>;
+  walkForward?: WalkForwardResult;
+};
+
+/**
+ * Present only on a sweep submitted with `walkForward`, and present from acceptance onward — its presence, not its contents, is what identifies a walk-forward sweep. `completedFolds` is 0 while the first fold is still running.
+ */
+export type WalkForwardResult = {
+  /**
+   * Folds requested at submit.
+   */
+  folds: number;
+  /**
+   * Resolved in-sample share each fold optimized on.
+   */
+  inSamplePct?: number;
+  /**
+   * Folds that have finished and reported a winner.
+   */
+  completedFolds: number;
+  /**
+   * Mean normalized lattice distance between consecutive fold winners. Low is good: winners that stay in a tight band fold after fold are evidence the parameter means something, while winners that jump across the grid every time are the sweep re-fitting noise, and that backtest will not survive contact with live data. **Absent is not zero** — the field is omitted whenever the figure could not be computed (fewer than two folds finished, no stored grid to place winners on), because zero is itself a meaningful reading here and a placeholder would be indistinguishable from perfect stability.
+   */
+  paramDrift?: number;
+  /**
+   * One entry per completed fold, oldest first.
+   */
+  results: Array<WalkForwardFold>;
+};
+
+/**
+ * What one fold concluded. The out-of-sample row is the answer; the in-sample figure is only there to be compared against it, since any grid produces a flattering in-sample winner — that is what optimizing does. The gap between them is the whole reading.
+ */
+export type WalkForwardFold = {
+  /**
+   * Position in the walk-forward sequence, oldest first.
+   */
+  foldIx: number;
+  /**
+   * First index of the optimization window, into the prepared session.
+   */
+  inSampleFrom: number;
+  /**
+   * End of the optimization window, exclusive — and where scoring begins.
+   */
+  inSampleTo: number;
+  /**
+   * End of the scoring window, exclusive.
+   */
+  outOfSampleTo: number;
+  /**
+   * The parameter vector that won this fold's optimization window.
+   */
+  params: {
+    [key: string]: unknown;
+  };
+  /**
+   * How that winner scored on the window it was chosen on.
+   */
+  inSampleSharpe: number;
+  outOfSample: SweepRunRow;
+  /**
+   * Vectors this fold evaluated in-sample before picking its winner.
+   */
+  vectorsRun: number;
 };
 
 /**
@@ -417,141 +623,141 @@ export type ExecuteSweepResult = {
  *
  */
 export type AcceptedJob = {
-    /**
-     * Unique job identifier; use this to poll for completion.
-     */
-    jobId: string;
+  /**
+   * Unique job identifier; use this to poll for completion.
+   */
+  jobId: string;
 };
 
 /**
  * Backtest job result.
  */
 export type BacktestJobResult = {
-    results: ResultMap;
-    state: JobState;
+  results: ResultMap;
+  state: JobState;
 };
 
 /**
  * Execution result map. Always includes core fields (hostName, iops, strategyId, instrument). Yield metrics (pnlTotal, pnlTotalPercent, totalTrades, winRate, equityCurve, etc.) are present when the strategy emitted at least one trade. When signal storage is enabled, includes signal fields described below. `notices` carries what the run had to say about itself, and is absent when it had nothing.
  */
 export type ResultMap = {
-    /**
-     * Identifier of the worker that executed the strategy. Useful when reporting issues so support can correlate with logs.
-     */
-    hostName?: string;
-    /**
-     * Instrument operations per second throughput during execution
-     */
-    iops?: number;
-    /**
-     * **Not the `strategyId` you compiled with** — this is the execution context id,
-     * `strategy:<user>:<strategyId>`. The compiled strategy's id is the last `:`-separated
-     * segment; that, not this whole string, is what `GET /strategy/{strategyId}` takes.
-     *
-     * Take the segment after the last `:` rather than counting from the front: the shape has
-     * changed once already and callers that indexed a fixed position broke on it.
-     *
-     */
-    strategyId: string;
-    /**
-     * The instrument (currency pair) that was backtested
-     */
-    instrument: string;
-    /**
-     * Diagnostics the engine raised over this run, each with `provenance: execute`.
-     *
-     * **Absent means nothing was raised.** This is the one surface where silence is a real
-     * answer: the run happened, over your data, start to finish, and the engine found nothing
-     * worth saying. That is not true of the compile path, where an empty list only means a
-     * short synthetic series reached nothing — see `GET /strategy/{strategyId}`.
-     *
-     * Notices are raised on failed and aborted runs too, and those are the ones most worth
-     * reading: a run that produced no trades often did so for a reason stated here.
-     *
-     */
-    notices?: Array<Notice>;
-    /**
-     * How many notices were dropped past the cap of 50. Absent when none were. A large value usually means one fault repeating per instrument or per parameter vector rather than 50 distinct problems.
-     */
-    noticesTruncated?: number;
-    /**
-     * Total profit and loss in the output currency
-     */
-    pnlTotal?: number;
-    /**
-     * Total PnL as a percentage of the initial capital (`backtestFunding`). Zero when `backtestFunding` is 0.
-     */
-    pnlTotalPercent?: number;
-    /**
-     * Total number of trades executed by the strategy
-     */
-    totalTrades?: number;
-    /**
-     * Percentage of profitable trades (0-100)
-     */
-    winRate?: number;
-    /**
-     * Risk-adjusted return ratio (mean return / standard deviation of returns)
-     */
-    sharpeRatio?: number;
-    /**
-     * Downside risk-adjusted return ratio (mean return / downside deviation)
-     */
-    sortinoRatio?: number;
-    /**
-     * Compound Annual Growth Rate
-     */
-    cagr?: number;
-    /**
-     * Maximum absolute drawdown in the output currency
-     */
-    maxDrawdown?: number;
-    /**
-     * Maximum percentage drawdown from peak equity
-     */
-    maxDrawdownPercent?: number;
-    /**
-     * Equity curve over the backtest. Element 0 is an anchor at the backtest `from` with `initialCapital`; the remaining points are one sample per emitted yield, in order. Use it to plot the strategy's running equity without re-deriving it from the yield history.
-     */
-    equityCurve?: Array<EquityPoint>;
-    /**
-     * Number of signals emitted during strategy execution
-     */
-    signalCount?: number;
-    /**
-     * Storage key for the signals file. Treat as opaque; use signalsUrl to download.
-     */
-    signalsId?: string;
-    /**
-     * HTTPS URL to download the signals Parquet file. Use signalsUpload to know when it's ready.
-     */
-    signalsUrl?: string;
-    /**
-     * Upload status. Done = signal file is available at signalsUrl. Failed = upload error (see signalsUploadReason). Skipped = no signals emitted.
-     */
-    signalsUpload?: 'Done' | 'Failed' | 'Skipped';
-    /**
-     * ISO 8601 timestamp of when the upload completed. Only present when signalsUpload is Done.
-     */
-    signalsUploadedAt?: string;
-    /**
-     * Human-readable reason when signalsUpload is Failed or Skipped.
-     */
-    signalsUploadReason?: string;
+  /**
+   * Identifier of the worker that executed the strategy. Useful when reporting issues so support can correlate with logs.
+   */
+  hostName?: string;
+  /**
+   * Instrument operations per second throughput during execution
+   */
+  iops?: number;
+  /**
+   * **Not the `strategyId` you compiled with** — this is the execution context id,
+   * `strategy:<user>:<strategyId>`. The compiled strategy's id is the last `:`-separated
+   * segment; that, not this whole string, is what `GET /strategy/{strategyId}` takes.
+   *
+   * Take the segment after the last `:` rather than counting from the front: the shape has
+   * changed once already and callers that indexed a fixed position broke on it.
+   *
+   */
+  strategyId: string;
+  /**
+   * The instrument (currency pair) that was backtested
+   */
+  instrument: string;
+  /**
+   * Diagnostics the engine raised over this run, each with `provenance: execute`.
+   *
+   * **Absent means nothing was raised.** This is the one surface where silence is a real
+   * answer: the run happened, over your data, start to finish, and the engine found nothing
+   * worth saying. That is not true of the compile path, where an empty list only means a
+   * short synthetic series reached nothing — see `GET /strategy/{strategyId}`.
+   *
+   * Notices are raised on failed and aborted runs too, and those are the ones most worth
+   * reading: a run that produced no trades often did so for a reason stated here.
+   *
+   */
+  notices?: Array<Notice>;
+  /**
+   * How many notices were dropped past the cap of 50. Absent when none were. A large value usually means one fault repeating per instrument or per parameter vector rather than 50 distinct problems.
+   */
+  noticesTruncated?: number;
+  /**
+   * Total profit and loss in the output currency
+   */
+  pnlTotal?: number;
+  /**
+   * Total PnL as a percentage of the initial capital (`backtestFunding`). Zero when `backtestFunding` is 0.
+   */
+  pnlTotalPercent?: number;
+  /**
+   * Total number of trades executed by the strategy
+   */
+  totalTrades?: number;
+  /**
+   * Percentage of profitable trades (0-100)
+   */
+  winRate?: number;
+  /**
+   * Risk-adjusted return ratio (mean return / standard deviation of returns)
+   */
+  sharpeRatio?: number;
+  /**
+   * Downside risk-adjusted return ratio (mean return / downside deviation)
+   */
+  sortinoRatio?: number;
+  /**
+   * Compound Annual Growth Rate
+   */
+  cagr?: number;
+  /**
+   * Maximum absolute drawdown in the output currency
+   */
+  maxDrawdown?: number;
+  /**
+   * Maximum percentage drawdown from peak equity
+   */
+  maxDrawdownPercent?: number;
+  /**
+   * Equity curve over the backtest. Element 0 is an anchor at the backtest `from` with `initialCapital`; the remaining points are one sample per emitted yield, in order. Use it to plot the strategy's running equity without re-deriving it from the yield history.
+   */
+  equityCurve?: Array<EquityPoint>;
+  /**
+   * Number of signals emitted during strategy execution
+   */
+  signalCount?: number;
+  /**
+   * Storage key for the signals file. Treat as opaque; use signalsUrl to download.
+   */
+  signalsId?: string;
+  /**
+   * HTTPS URL to download the signals Parquet file. Use signalsUpload to know when it's ready.
+   */
+  signalsUrl?: string;
+  /**
+   * Upload status. Done = signal file is available at signalsUrl. Failed = upload error (see signalsUploadReason). Skipped = no signals emitted.
+   */
+  signalsUpload?: "Done" | "Failed" | "Skipped";
+  /**
+   * ISO 8601 timestamp of when the upload completed. Only present when signalsUpload is Done.
+   */
+  signalsUploadedAt?: string;
+  /**
+   * Human-readable reason when signalsUpload is Failed or Skipped.
+   */
+  signalsUploadReason?: string;
 };
 
 /**
  * Single sample of the running equity at a yield event.
  */
 export type EquityPoint = {
-    /**
-     * Epoch milliseconds. The first point in an equity curve is anchored at the backtest `from`; subsequent points carry the timestamp of each emitted yield.
-     */
-    timestamp: number;
-    /**
-     * Running equity at this point (`initialCapital + cumulativePnl`).
-     */
-    equity: number;
+  /**
+   * Epoch milliseconds. The first point in an equity curve is anchored at the backtest `from`; subsequent points carry the timestamp of each emitted yield.
+   */
+  timestamp: number;
+  /**
+   * Running equity at this point (`initialCapital + cumulativePnl`).
+   */
+  equity: number;
 };
 
 /**
@@ -568,25 +774,25 @@ export type StrategyId = string;
  *
  */
 export type Notice = {
-    /**
-     * Severity as the engine classified it.
-     */
-    level: string;
-    /**
-     * Stable identifier for the kind of finding; safe to match on.
-     */
-    code: string;
-    /**
-     * Human-readable explanation.
-     */
-    message: string;
-    /**
-     * Where it came from, which matters because the two silences differ: an empty list from a
-     * real run (`execute`) is a clean bill of health, while an empty list from
-     * `compile-dry-run` is only a lower bound over a bounded synthetic series.
-     *
-     */
-    provenance?: 'execute' | 'compile-dry-run';
+  /**
+   * Severity as the engine classified it.
+   */
+  level: string;
+  /**
+   * Stable identifier for the kind of finding; safe to match on.
+   */
+  code: string;
+  /**
+   * Human-readable explanation.
+   */
+  message: string;
+  /**
+   * Where it came from, which matters because the two silences differ: an empty list from a
+   * real run (`execute`) is a clean bill of health, while an empty list from
+   * `compile-dry-run` is only a lower bound over a bounded synthetic series.
+   *
+   */
+  provenance?: "execute" | "compile-dry-run";
 };
 
 /**
@@ -598,796 +804,869 @@ export type Notice = {
  *
  */
 export type StrategyState = {
-    strategyId: StrategyId;
-    /**
-     * * `not_validated` — registered, never checked. `POST /strategy/{strategyId}/validate`
-     * checks it.
-     * * `pending` — a check was asked for and has not answered yet.
-     * * `passed` — the class loaded and survived its first event.
-     * * `failed` — it did not; `detail` says how.
-     *
-     */
-    validation: 'not_validated' | 'pending' | 'passed' | 'failed';
-    /**
-     * When the live compilation was produced.
-     */
-    compiledAt?: string;
-    /**
-     * The market data a strategy needs, read off the compiled class rather than off anything
-     * you sent — `TickerStrategy`, `KlineStrategy` and `FundingRateStrategy` each declare one,
-     * and a `MultiSourceStrategy` declares a set.
-     *
-     * **Absent is not "needs nothing".** A strategy always needs market data, so an absent
-     * field never means an empty requirement — it means the platform could not establish the
-     * answer without constructing your strategy, which it will not do to fill in a field.
-     * That happens for a `MultiSourceStrategy`, for a class that overrides
-     * `getMarketDataSource()`, and for anything registered before this field existed;
-     * re-registering the source fills it in.
-     *
-     */
-    requiredSources?: Array<'Ticker' | 'KLine' | 'FundingRate'>;
-    /**
-     * When the verdict was recorded. Absent until there is one.
-     */
-    validatedAt?: string;
-    /**
-     * Why validation failed, or why a queued check has not reported. Present on `failed`, and
-     * alongside `validationStalled`.
-     *
-     */
-    detail?: string;
-    /**
-     * What the run surfaced. An empty or absent list is not a clean bill of health when
-     * `dryRunIncomplete` is true — see that field.
-     *
-     */
-    notices?: Array<Notice>;
-    /**
-     * How many notices were dropped past the cap. Absent when none were.
-     */
-    noticesTruncated?: number;
-    /**
-     * The check did not finish its budget — it ran out of time, was refused because the
-     * platform was already holding too many unfinishable runs, or hit a failure attributable to
-     * the synthetic instrument rather than to your strategy. The verdict stands as far as it
-     * went; it simply reached less than a full run would.
-     *
-     */
-    dryRunIncomplete?: boolean;
-    /**
-     * A queued check has not reported for far longer than one takes. Nothing is disproved about
-     * the strategy — the check has not run. Stop waiting and re-request it later.
-     *
-     */
-    validationStalled?: boolean;
+  strategyId: StrategyId;
+  /**
+   * * `not_validated` — registered, never checked. `POST /strategy/{strategyId}/validate`
+   * checks it.
+   * * `pending` — a check was asked for and has not answered yet.
+   * * `passed` — the class loaded and survived its first event.
+   * * `failed` — it did not; `detail` says how.
+   *
+   */
+  validation: "not_validated" | "pending" | "passed" | "failed";
+  /**
+   * When the live compilation was produced.
+   */
+  compiledAt?: string;
+  /**
+   * The market data a strategy needs, read off the compiled class rather than off anything
+   * you sent — `TickerStrategy`, `KlineStrategy` and `FundingRateStrategy` each declare one,
+   * and a `MultiSourceStrategy` declares a set.
+   *
+   * **Absent is not "needs nothing".** A strategy always needs market data, so an absent
+   * field never means an empty requirement — it means the platform could not establish the
+   * answer without constructing your strategy, which it will not do to fill in a field.
+   * That happens for a `MultiSourceStrategy`, for a class that overrides
+   * `getMarketDataSource()`, and for anything registered before this field existed;
+   * re-registering the source fills it in.
+   *
+   */
+  requiredSources?: Array<"Ticker" | "KLine" | "FundingRate">;
+  /**
+   * When the verdict was recorded. Absent until there is one.
+   */
+  validatedAt?: string;
+  /**
+   * Why validation failed, or why a queued check has not reported. Present on `failed`, and
+   * alongside `validationStalled`.
+   *
+   */
+  detail?: string;
+  /**
+   * What the run surfaced. An empty or absent list is not a clean bill of health when
+   * `dryRunIncomplete` is true — see that field.
+   *
+   */
+  notices?: Array<Notice>;
+  /**
+   * How many notices were dropped past the cap. Absent when none were.
+   */
+  noticesTruncated?: number;
+  /**
+   * The check did not finish its budget — it ran out of time, was refused because the
+   * platform was already holding too many unfinishable runs, or hit a failure attributable to
+   * the synthetic instrument rather than to your strategy. The verdict stands as far as it
+   * went; it simply reached less than a full run would.
+   *
+   */
+  dryRunIncomplete?: boolean;
+  /**
+   * A queued check has not reported for far longer than one takes. Nothing is disproved about
+   * the strategy — the check has not run. Stop waiting and re-request it later.
+   *
+   */
+  validationStalled?: boolean;
 };
 
 export type AuthTokenResponse = {
-    /**
-     * Short-lived HS256 JWT. Send as `Authorization: Bearer <token>` on all other endpoints.
-     */
-    access_token: string;
-    /**
-     * Always `Bearer`.
-     */
-    token_type: 'Bearer';
-    /**
-     * Seconds until the JWT expires (typically 3600).
-     */
-    expires_in: number;
-    /**
-     * Scopes granted to this token. Reserved for future use; currently always empty.
-     */
-    scopes?: Array<string>;
-    /**
-     * Subscription tier this token was issued for. Drives rate limits and feature flags on downstream endpoints.
-     */
-    tier: 'free' | 'basic' | 'pro' | 'elite';
+  /**
+   * Short-lived HS256 JWT. Send as `Authorization: Bearer <token>` on all other endpoints.
+   */
+  access_token: string;
+  /**
+   * Always `Bearer`.
+   */
+  token_type: "Bearer";
+  /**
+   * Seconds until the JWT expires (typically 3600).
+   */
+  expires_in: number;
+  /**
+   * Scopes granted to this token. Reserved for future use; currently always empty.
+   */
+  scopes?: Array<string>;
+  /**
+   * Subscription tier this token was issued for. Drives rate limits and feature flags on downstream endpoints.
+   */
+  tier: "free" | "basic" | "pro" | "elite";
 };
 
 /**
  * Error envelope returned by `POST /auth/token` when the API key is rejected.
  */
 export type AuthTokenError = {
-    /**
-     * Machine-readable error reason.
-     */
-    code: 'invalid_apikey' | 'apikey_revoked' | 'apikey_expired';
-    /**
-     * Human-readable description of the failure.
-     */
-    message: string;
+  /**
+   * Machine-readable error reason.
+   */
+  code: "invalid_apikey" | "apikey_revoked" | "apikey_expired";
+  /**
+   * Human-readable description of the failure.
+   */
+  message: string;
 };
 
 export type AuthenticateData = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/auth/token';
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/auth/token";
 };
 
 export type AuthenticateErrors = {
-    /**
-     * API key is invalid, revoked, or expired.
-     */
-    401: AuthTokenError;
-    /**
-     * Rate limit exceeded for this API key.
-     */
-    429: unknown;
+  /**
+   * API key is invalid, revoked, or expired.
+   */
+  401: AuthTokenError;
+  /**
+   * Rate limit exceeded for this API key.
+   */
+  429: unknown;
 };
 
 export type AuthenticateError = AuthenticateErrors[keyof AuthenticateErrors];
 
 export type AuthenticateResponses = {
-    /**
-     * API key accepted; JWT returned.
-     */
-    200: AuthTokenResponse;
+  /**
+   * API key accepted; JWT returned.
+   */
+  200: AuthTokenResponse;
 };
 
-export type AuthenticateResponse = AuthenticateResponses[keyof AuthenticateResponses];
+export type AuthenticateResponse =
+  AuthenticateResponses[keyof AuthenticateResponses];
 
 export type ListExchangesData = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/exchanges';
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/exchanges";
 };
 
 export type ListExchangesResponses = {
-    /**
-     * A JSON array of Exchanges
-     */
-    200: Array<Exchange>;
+  /**
+   * A JSON array of Exchanges
+   */
+  200: Array<Exchange>;
 };
 
-export type ListExchangesResponse = ListExchangesResponses[keyof ListExchangesResponses];
+export type ListExchangesResponse =
+  ListExchangesResponses[keyof ListExchangesResponses];
 
 export type ListInstrumentsData = {
-    body?: never;
-    path: {
-        /**
-         * ID of the exchange to retrieve instruments for
-         */
-        exchangeId: string;
-    };
-    query?: never;
-    url: '/exchange/{exchangeId}/instruments';
+  body?: never;
+  path: {
+    /**
+     * ID of the exchange to retrieve instruments for
+     */
+    exchangeId: string;
+  };
+  query?: never;
+  url: "/exchange/{exchangeId}/instruments";
 };
 
 export type ListInstrumentsErrors = {
-    /**
-     * Exchange not found or instrument catalog not available
-     */
-    404: ResponseError;
+  /**
+   * Exchange not found or instrument catalog not available
+   */
+  404: ResponseError;
 };
 
-export type ListInstrumentsError = ListInstrumentsErrors[keyof ListInstrumentsErrors];
+export type ListInstrumentsError =
+  ListInstrumentsErrors[keyof ListInstrumentsErrors];
 
 export type ListInstrumentsResponses = {
-    /**
-     * The default (spot) segment's instruments in `data`, `meta`, and HAL `_links` (self + spot/futures segment discovery)
-     */
-    200: InstrumentListResponse;
+  /**
+   * The default (spot) segment's instruments in `data`, `meta`, and HAL `_links` (self + spot/futures segment discovery)
+   */
+  200: InstrumentListResponse;
 };
 
-export type ListInstrumentsResponse = ListInstrumentsResponses[keyof ListInstrumentsResponses];
+export type ListInstrumentsResponse =
+  ListInstrumentsResponses[keyof ListInstrumentsResponses];
 
 export type ListSegmentInstrumentsData = {
-    body?: never;
-    path: {
-        /**
-         * ID of the exchange to retrieve instruments for
-         */
-        exchangeId: string;
-        /**
-         * Market segment to list instruments for
-         */
-        segment: 'spot' | 'futures';
-    };
-    query?: never;
-    url: '/exchange/{exchangeId}/{segment}/instruments';
+  body?: never;
+  path: {
+    /**
+     * ID of the exchange to retrieve instruments for
+     */
+    exchangeId: string;
+    /**
+     * Market segment to list instruments for
+     */
+    segment: "spot" | "futures";
+  };
+  query?: never;
+  url: "/exchange/{exchangeId}/{segment}/instruments";
 };
 
 export type ListSegmentInstrumentsErrors = {
-    /**
-     * Exchange, segment, or instrument catalog not found
-     */
-    404: ResponseError;
+  /**
+   * Exchange, segment, or instrument catalog not found
+   */
+  404: ResponseError;
 };
 
-export type ListSegmentInstrumentsError = ListSegmentInstrumentsErrors[keyof ListSegmentInstrumentsErrors];
+export type ListSegmentInstrumentsError =
+  ListSegmentInstrumentsErrors[keyof ListSegmentInstrumentsErrors];
 
 export type ListSegmentInstrumentsResponses = {
-    /**
-     * An object with a `data` array of instrument details (each with per-data-type coverage) and a `meta` block
-     */
-    200: InstrumentListResponse;
+  /**
+   * An object with a `data` array of instrument details (each with per-data-type coverage) and a `meta` block
+   */
+  200: InstrumentListResponse;
 };
 
-export type ListSegmentInstrumentsResponse = ListSegmentInstrumentsResponses[keyof ListSegmentInstrumentsResponses];
+export type ListSegmentInstrumentsResponse =
+  ListSegmentInstrumentsResponses[keyof ListSegmentInstrumentsResponses];
 
 export type DownloadTickersData = {
-    body?: never;
-    path: {
-        /**
-         * ID of the exchange (e.g. `binance`).
-         */
-        exchangeId: string;
-        /**
-         * Base asset symbol (first leg of the pair).
-         */
-        base: string;
-        /**
-         * Quote asset symbol (second leg of the pair).
-         */
-        quote: string;
-    };
-    query: {
-        /**
-         * Hour selector in `YYYY-MM-DDTHH` (UTC). The returned segment covers
-         * `[HH:00:00Z, HH+1:00:00Z)`.
-         *
-         */
-        hour: string;
-        /**
-         * Response wire format. `lastra` (default) returns raw Lastra bytes.
-         * `parquet` returns Parquet via on-the-fly conversion using
-         * [lastra-convert](https://github.com/QTSurfer/lastra-convert).
-         *
-         */
-        format?: 'lastra' | 'parquet';
-    };
-    url: '/exchange/{exchangeId}/tickers/{base}/{quote}';
+  body?: never;
+  path: {
+    /**
+     * ID of the exchange (e.g. `binance`).
+     */
+    exchangeId: string;
+    /**
+     * Base asset symbol (first leg of the pair).
+     */
+    base: string;
+    /**
+     * Quote asset symbol (second leg of the pair).
+     */
+    quote: string;
+  };
+  query: {
+    /**
+     * Hour selector in `YYYY-MM-DDTHH` (UTC). The returned segment covers
+     * `[HH:00:00Z, HH+1:00:00Z)`.
+     *
+     */
+    hour: string;
+    /**
+     * Response wire format. `lastra` (default) returns raw Lastra bytes.
+     * `parquet` returns Parquet via on-the-fly conversion using
+     * [lastra-convert](https://github.com/QTSurfer/lastra-convert).
+     *
+     */
+    format?: "lastra" | "parquet";
+  };
+  url: "/exchange/{exchangeId}/tickers/{base}/{quote}";
 };
 
 export type DownloadTickersErrors = {
-    /**
-     * Missing or malformed parameters (e.g. `hour` not `YYYY-MM-DDTHH`).
-     */
-    400: ResponseError;
-    /**
-     * No Lastra segment exists for the requested instrument/hour.
-     */
-    404: ResponseError;
-    /**
-     * Unexpected I/O error serving the file.
-     */
-    500: ResponseError;
+  /**
+   * Missing or malformed parameters (e.g. `hour` not `YYYY-MM-DDTHH`).
+   */
+  400: ResponseError;
+  /**
+   * No Lastra segment exists for the requested instrument/hour.
+   */
+  404: ResponseError;
+  /**
+   * Unexpected I/O error serving the file.
+   */
+  500: ResponseError;
 };
 
-export type DownloadTickersError = DownloadTickersErrors[keyof DownloadTickersErrors];
+export type DownloadTickersError =
+  DownloadTickersErrors[keyof DownloadTickersErrors];
 
 export type DownloadTickersResponses = {
-    /**
-     * One hour of tickers for the instrument. `Content-Type` is
-     * `application/vnd.lastra` by default or
-     * `application/vnd.apache.parquet` when `format=parquet` was
-     * requested.
-     *
-     */
-    200: Blob | File;
+  /**
+   * One hour of tickers for the instrument. `Content-Type` is
+   * `application/vnd.lastra` by default or
+   * `application/vnd.apache.parquet` when `format=parquet` was
+   * requested.
+   *
+   */
+  200: Blob | File;
 };
 
-export type DownloadTickersResponse = DownloadTickersResponses[keyof DownloadTickersResponses];
+export type DownloadTickersResponse =
+  DownloadTickersResponses[keyof DownloadTickersResponses];
 
 export type DownloadKlinesData = {
-    body?: never;
-    path: {
-        /**
-         * ID of the exchange (e.g. `binance`).
-         */
-        exchangeId: string;
-        /**
-         * Base asset symbol.
-         */
-        base: string;
-        /**
-         * Quote asset symbol.
-         */
-        quote: string;
-    };
-    query: {
-        /**
-         * Hour selector in `YYYY-MM-DDTHH` (UTC). The returned segment covers
-         * `[HH:00:00Z, HH+1:00:00Z)`.
-         *
-         */
-        hour: string;
-        /**
-         * Response wire format. `lastra` (default) returns raw Lastra bytes.
-         * `parquet` returns Parquet via on-the-fly conversion.
-         *
-         */
-        format?: 'lastra' | 'parquet';
-    };
-    url: '/exchange/{exchangeId}/klines/{base}/{quote}';
+  body?: never;
+  path: {
+    /**
+     * ID of the exchange (e.g. `binance`).
+     */
+    exchangeId: string;
+    /**
+     * Base asset symbol.
+     */
+    base: string;
+    /**
+     * Quote asset symbol.
+     */
+    quote: string;
+  };
+  query: {
+    /**
+     * Hour selector in `YYYY-MM-DDTHH` (UTC). The returned segment covers
+     * `[HH:00:00Z, HH+1:00:00Z)`.
+     *
+     */
+    hour: string;
+    /**
+     * Response wire format. `lastra` (default) returns raw Lastra bytes.
+     * `parquet` returns Parquet via on-the-fly conversion.
+     *
+     */
+    format?: "lastra" | "parquet";
+  };
+  url: "/exchange/{exchangeId}/klines/{base}/{quote}";
 };
 
 export type DownloadKlinesErrors = {
-    /**
-     * Missing or malformed parameters (e.g. `hour` not `YYYY-MM-DDTHH`).
-     */
-    400: ResponseError;
-    /**
-     * No Lastra segment exists for the requested instrument/hour.
-     */
-    404: ResponseError;
-    /**
-     * Unexpected I/O error serving the file.
-     */
-    500: ResponseError;
+  /**
+   * Missing or malformed parameters (e.g. `hour` not `YYYY-MM-DDTHH`).
+   */
+  400: ResponseError;
+  /**
+   * No Lastra segment exists for the requested instrument/hour.
+   */
+  404: ResponseError;
+  /**
+   * Unexpected I/O error serving the file.
+   */
+  500: ResponseError;
 };
 
-export type DownloadKlinesError = DownloadKlinesErrors[keyof DownloadKlinesErrors];
+export type DownloadKlinesError =
+  DownloadKlinesErrors[keyof DownloadKlinesErrors];
 
 export type DownloadKlinesResponses = {
-    /**
-     * One hour of klines for the instrument. `Content-Type` is
-     * `application/vnd.lastra` by default or
-     * `application/vnd.apache.parquet` when `format=parquet`.
-     *
-     */
-    200: Blob | File;
+  /**
+   * One hour of klines for the instrument. `Content-Type` is
+   * `application/vnd.lastra` by default or
+   * `application/vnd.apache.parquet` when `format=parquet`.
+   *
+   */
+  200: Blob | File;
 };
 
-export type DownloadKlinesResponse = DownloadKlinesResponses[keyof DownloadKlinesResponses];
+export type DownloadKlinesResponse =
+  DownloadKlinesResponses[keyof DownloadKlinesResponses];
 
 export type CompileStrategyData = {
-    /**
-     * Raw strategy Java source code
-     */
-    body: string;
-    path?: never;
-    query?: never;
-    url: '/strategy';
+  /**
+   * Raw strategy Java source code
+   */
+  body: string;
+  path?: never;
+  query?: never;
+  url: "/strategy";
 };
 
 export type CompileStrategyErrors = {
-    /**
-     * The source is not valid Java; the message carries the compiler diagnostics. Nothing is
-     * registered, so there is no id to look up afterwards.
-     *
-     */
-    400: ResponseError;
-    /**
-     * Too many compilations in flight. Retry later.
-     */
-    429: ResponseError;
+  /**
+   * The source is not valid Java; the message carries the compiler diagnostics. Nothing is
+   * registered, so there is no id to look up afterwards.
+   *
+   */
+  400: ResponseError;
+  /**
+   * Too many compilations in flight. Retry later.
+   */
+  429: ResponseError;
 };
 
-export type CompileStrategyError = CompileStrategyErrors[keyof CompileStrategyErrors];
+export type CompileStrategyError =
+  CompileStrategyErrors[keyof CompileStrategyErrors];
 
 export type CompileStrategyResponses = {
-    /**
-     * Compiled and registered
-     */
-    200: {
-        strategyId: StrategyId;
-    };
+  /**
+   * Compiled and registered
+   */
+  200: {
+    strategyId: StrategyId;
+  };
 };
 
-export type CompileStrategyResponse = CompileStrategyResponses[keyof CompileStrategyResponses];
+export type CompileStrategyResponse =
+  CompileStrategyResponses[keyof CompileStrategyResponses];
 
 export type ValidateStrategyData = {
-    body?: never;
-    path: {
-        /**
-         * The id returned by `POST /strategy`
-         */
-        strategyId: StrategyId;
-    };
-    query?: never;
-    url: '/strategy/{strategyId}/validate';
+  body?: never;
+  path: {
+    /**
+     * The id returned by `POST /strategy`
+     */
+    strategyId: StrategyId;
+  };
+  query?: never;
+  url: "/strategy/{strategyId}/validate";
 };
 
 export type ValidateStrategyErrors = {
-    /**
-     * No such registered strategy for this user
-     */
-    404: ResponseError;
+  /**
+   * No such registered strategy for this user
+   */
+  404: ResponseError;
 };
 
-export type ValidateStrategyError = ValidateStrategyErrors[keyof ValidateStrategyErrors];
+export type ValidateStrategyError =
+  ValidateStrategyErrors[keyof ValidateStrategyErrors];
 
 export type ValidateStrategyResponses = {
-    /**
-     * Already validated; the recorded verdict, unchanged
-     */
-    200: StrategyState;
-    /**
-     * Validation queued. Not a terminal outcome — poll `GET /strategy/{strategyId}` until
-     * `validation` leaves `pending`.
-     *
-     */
-    202: {
-        strategyId: StrategyId;
-        validation: 'pending';
-    };
+  /**
+   * Already validated; the recorded verdict, unchanged
+   */
+  200: StrategyState;
+  /**
+   * Validation queued. Not a terminal outcome — poll `GET /strategy/{strategyId}` until
+   * `validation` leaves `pending`.
+   *
+   */
+  202: {
+    strategyId: StrategyId;
+    validation: "pending";
+  };
 };
 
-export type ValidateStrategyResponse = ValidateStrategyResponses[keyof ValidateStrategyResponses];
+export type ValidateStrategyResponse =
+  ValidateStrategyResponses[keyof ValidateStrategyResponses];
 
 export type GetStrategyData = {
-    body?: never;
-    path: {
-        /**
-         * The id returned by `POST /strategy`
-         */
-        strategyId: StrategyId;
-    };
-    query?: never;
-    url: '/strategy/{strategyId}';
+  body?: never;
+  path: {
+    /**
+     * The id returned by `POST /strategy`
+     */
+    strategyId: StrategyId;
+  };
+  query?: never;
+  url: "/strategy/{strategyId}";
 };
 
 export type GetStrategyErrors = {
-    /**
-     * No such registered strategy for this user
-     */
-    404: ResponseError;
+  /**
+   * No such registered strategy for this user
+   */
+  404: ResponseError;
 };
 
 export type GetStrategyError = GetStrategyErrors[keyof GetStrategyErrors];
 
 export type GetStrategyResponses = {
-    /**
-     * Strategy state
-     */
-    200: StrategyState;
+  /**
+   * Strategy state
+   */
+  200: StrategyState;
 };
 
-export type GetStrategyResponse = GetStrategyResponses[keyof GetStrategyResponses];
+export type GetStrategyResponse =
+  GetStrategyResponses[keyof GetStrategyResponses];
 
 export type PrepareBacktestData = {
+  /**
+   * The required data to prepare a backtesting
+   */
+  body: PrepareRequest;
+  path: {
     /**
-     * The required data to prepare a backtesting
+     * ID of the exchange to prepare the backtesting for
      */
-    body: PrepareRequest;
-    path: {
-        /**
-         * ID of the exchange to prepare the backtesting for
-         */
-        exchangeId: string;
-        /**
-         * The type of data source to prepare from
-         */
-        type: DataSourceType;
-    };
-    query?: never;
-    url: '/backtest/{exchangeId}/{type}/prepare';
+    exchangeId: string;
+    /**
+     * The type of data source to prepare from
+     */
+    type: DataSourceType;
+  };
+  query?: never;
+  url: "/backtest/{exchangeId}/{type}/prepare";
 };
 
 export type PrepareBacktestErrors = {
-    /**
-     * Invalid request or parameters. Also returned when `from` is older than the configured
-     * lookback window or `to` is in the future.
-     *
-     */
-    400: ResponseError;
-    /**
-     * Exchange or data source type not found
-     */
-    404: ResponseError;
-    /**
-     * Rate limited. Returned when the global queue exceeds capacity or the user has too many
-     * active backtests.
-     *
-     */
-    429: ResponseError;
+  /**
+   * Invalid request or parameters. Also returned when `from` is older than the configured
+   * lookback window or `to` is in the future.
+   *
+   */
+  400: ResponseError;
+  /**
+   * Exchange or data source type not found
+   */
+  404: ResponseError;
+  /**
+   * Rate limited. Returned when the global queue exceeds capacity or the user has too many
+   * active backtests.
+   *
+   */
+  429: ResponseError;
 };
 
-export type PrepareBacktestError = PrepareBacktestErrors[keyof PrepareBacktestErrors];
+export type PrepareBacktestError =
+  PrepareBacktestErrors[keyof PrepareBacktestErrors];
 
 export type PrepareBacktestResponses = {
-    /**
-     * Prepare task accepted (queued for processing)
-     */
-    202: AcceptedJob;
+  /**
+   * Prepare task accepted (queued for processing)
+   */
+  202: AcceptedJob;
 };
 
-export type PrepareBacktestResponse = PrepareBacktestResponses[keyof PrepareBacktestResponses];
+export type PrepareBacktestResponse =
+  PrepareBacktestResponses[keyof PrepareBacktestResponses];
 
 export type GetPrepareStatusData = {
-    body?: never;
-    path: {
-        /**
-         * ID of the exchange for the backtesting process
-         */
-        exchangeId: string;
-        /**
-         * The type of data source to prepare from
-         */
-        type: DataSourceType;
-        /**
-         * Job ID returned by `POST /prepare`
-         */
-        jobId: string;
-    };
-    query?: never;
-    url: '/backtest/{exchangeId}/{type}/prepare/{jobId}';
+  body?: never;
+  path: {
+    /**
+     * ID of the exchange for the backtesting process
+     */
+    exchangeId: string;
+    /**
+     * The type of data source to prepare from
+     */
+    type: DataSourceType;
+    /**
+     * Job ID returned by `POST /prepare`
+     */
+    jobId: string;
+  };
+  query?: never;
+  url: "/backtest/{exchangeId}/{type}/prepare/{jobId}";
 };
 
 export type GetPrepareStatusErrors = {
-    /**
-     * Invalid request or parameters
-     */
-    400: ResponseError;
-    /**
-     * Prepare job not found or expired
-     */
-    404: ResponseError;
+  /**
+   * Invalid request or parameters
+   */
+  400: ResponseError;
+  /**
+   * Prepare job not found or expired
+   */
+  404: ResponseError;
 };
 
-export type GetPrepareStatusError = GetPrepareStatusErrors[keyof GetPrepareStatusErrors];
+export type GetPrepareStatusError =
+  GetPrepareStatusErrors[keyof GetPrepareStatusErrors];
 
 export type GetPrepareStatusResponses = {
-    /**
-     * Current prepare job state
-     */
-    200: PrepareJobState;
+  /**
+   * Current prepare job state
+   */
+  200: PrepareJobState;
 };
 
-export type GetPrepareStatusResponse = GetPrepareStatusResponses[keyof GetPrepareStatusResponses];
+export type GetPrepareStatusResponse =
+  GetPrepareStatusResponses[keyof GetPrepareStatusResponses];
 
 export type ExecuteSweepData = {
-    body: ExecuteSweepRequest;
-    path: {
-        exchangeId: string;
-        type: DataSourceType;
-        /**
-         * Job ID returned by `POST /backtest/{exchangeId}/{type}/prepare`.
-         */
-        requestId: string;
-    };
-    query?: never;
-    url: '/backtest/{exchangeId}/{type}/executeSweep/{requestId}';
+  body: ExecuteSweepRequest;
+  path: {
+    exchangeId: string;
+    type: DataSourceType;
+    /**
+     * Job ID returned by `POST /backtest/{exchangeId}/{type}/prepare`.
+     */
+    requestId: string;
+  };
+  query?: never;
+  url: "/backtest/{exchangeId}/{type}/executeSweep/{requestId}";
 };
 
 export type ExecuteSweepErrors = {
-    /**
-     * Invalid sweep specification or the expanded grid exceeds the server limit.
-     */
-    400: ResponseError;
-    /**
-     * Prepared request not found or expired.
-     */
-    404: ResponseError;
-    /**
-     * Sweep queue or user concurrency limit reached.
-     */
-    429: ResponseError;
+  /**
+   * Invalid sweep specification or the expanded grid exceeds the server limit.
+   */
+  400: ResponseError;
+  /**
+   * Prepared request not found or expired.
+   */
+  404: ResponseError;
+  /**
+   * Sweep queue or user concurrency limit reached.
+   */
+  429: ResponseError;
 };
 
 export type ExecuteSweepError = ExecuteSweepErrors[keyof ExecuteSweepErrors];
 
 export type ExecuteSweepResponses = {
-    /**
-     * Sweep accepted. The effective seed is returned for reproducibility.
-     */
-    202: ExecuteSweepAccepted;
+  /**
+   * Sweep accepted. The effective seed is returned for reproducibility.
+   */
+  202: ExecuteSweepAccepted;
 };
 
-export type ExecuteSweepResponse = ExecuteSweepResponses[keyof ExecuteSweepResponses];
+export type ExecuteSweepResponse =
+  ExecuteSweepResponses[keyof ExecuteSweepResponses];
 
 export type CancelSweepData = {
-    body?: never;
-    path: {
-        exchangeId: string;
-        type: DataSourceType;
-        requestId: string;
-        sweepId: string;
-    };
-    query?: never;
-    url: '/backtest/{exchangeId}/{type}/executeSweep/{requestId}/{sweepId}';
+  body?: never;
+  path: {
+    exchangeId: string;
+    type: DataSourceType;
+    requestId: string;
+    sweepId: string;
+  };
+  query?: never;
+  url: "/backtest/{exchangeId}/{type}/executeSweep/{requestId}/{sweepId}";
 };
 
 export type CancelSweepErrors = {
-    /**
-     * Sweep not found.
-     */
-    404: ResponseError;
+  /**
+   * Sweep not found.
+   */
+  404: ResponseError;
 };
 
 export type CancelSweepError = CancelSweepErrors[keyof CancelSweepErrors];
 
 export type CancelSweepResponses = {
-    /**
-     * Cancellation requested.
-     */
-    200: {
-        status: 'cancelling';
-        sweepId: string;
-    };
+  /**
+   * Cancellation requested.
+   */
+  200: {
+    status: "cancelling";
+    sweepId: string;
+  };
 };
 
-export type CancelSweepResponse = CancelSweepResponses[keyof CancelSweepResponses];
+export type CancelSweepResponse =
+  CancelSweepResponses[keyof CancelSweepResponses];
 
 export type GetSweepResultData = {
-    body?: never;
-    path: {
-        exchangeId: string;
-        type: DataSourceType;
-        requestId: string;
-        sweepId: string;
-    };
-    query?: {
-        objective?: 'sharpe' | 'sortino' | 'pnl' | 'maxdd';
-        /**
-         * `natural` is stable materialisation order; `ranked` is the display view.
-         */
-        order?: 'ranked' | 'natural';
-    };
-    url: '/backtest/{exchangeId}/{type}/executeSweep/{requestId}/{sweepId}';
+  body?: never;
+  path: {
+    exchangeId: string;
+    type: DataSourceType;
+    requestId: string;
+    sweepId: string;
+  };
+  query?: {
+    objective?: "sharpe" | "sortino" | "pnl" | "maxdd";
+    /**
+     * `natural` is stable materialisation order; `ranked` is the display view.
+     */
+    order?: "ranked" | "natural";
+    /**
+     * How the `ranked` view is ordered. `plateau` prefers points whose neighbourhood also scores well; `raw` uses the objective alone. Ignored when `order=natural`, which is always ordered by `runIx`.
+     */
+    ranking?: "plateau" | "raw";
+  };
+  url: "/backtest/{exchangeId}/{type}/executeSweep/{requestId}/{sweepId}";
 };
 
 export type GetSweepResultErrors = {
-    /**
-     * Sweep not found or expired.
-     */
-    404: ResponseError;
+  /**
+   * Sweep not found or expired.
+   */
+  404: ResponseError;
 };
 
-export type GetSweepResultError = GetSweepResultErrors[keyof GetSweepResultErrors];
+export type GetSweepResultError =
+  GetSweepResultErrors[keyof GetSweepResultErrors];
 
 export type GetSweepResultResponses = {
-    /**
-     * Current sweep snapshot and all currently available result rows for the selected view.
-     */
-    200: ExecuteSweepResult;
+  /**
+   * Current sweep snapshot and all currently available result rows for the selected view.
+   */
+  200: ExecuteSweepResult;
 };
 
-export type GetSweepResultResponse = GetSweepResultResponses[keyof GetSweepResultResponses];
+export type GetSweepResultResponse =
+  GetSweepResultResponses[keyof GetSweepResultResponses];
+
+export type GetSweepSensitivityData = {
+  body?: never;
+  path: {
+    exchangeId: string;
+    type: DataSourceType;
+    requestId: string;
+    sweepId: string;
+  };
+  query?: {
+    /**
+     * Which metric to aggregate. Defaults to the objective the sweep was submitted with.
+     */
+    objective?: "sharpe" | "sortino" | "pnl" | "maxdd";
+  };
+  url: "/backtest/{exchangeId}/{type}/executeSweep/{requestId}/{sweepId}/sensitivity";
+};
+
+export type GetSweepSensitivityErrors = {
+  /**
+   * Sweep not found or expired.
+   */
+  404: ResponseError;
+};
+
+export type GetSweepSensitivityError =
+  GetSweepSensitivityErrors[keyof GetSweepSensitivityErrors];
+
+export type GetSweepSensitivityResponses = {
+  /**
+   * Sensitivity aggregates over the rows available so far.
+   */
+  200: SweepSensitivity;
+};
+
+export type GetSweepSensitivityResponse =
+  GetSweepSensitivityResponses[keyof GetSweepSensitivityResponses];
 
 export type ExecuteBacktestData = {
+  /**
+   * Execute task parameters
+   */
+  body: {
     /**
-     * Execute task parameters
+     * Job ID returned by `POST /prepare` (must be in `Completed` state)
      */
-    body: {
-        /**
-         * Job ID returned by `POST /prepare` (must be in `Completed` state)
-         */
-        prepareJobId: string;
-        strategyId: StrategyId;
-        /**
-         * When true, the worker uploads emitted signals to object storage and the
-         * response includes `signalsUrl` / `signalsId` fields. Defaults to false.
-         *
-         */
-        storeSignals?: boolean;
-    };
-    path: {
-        /**
-         * ID of the exchange for the backtesting process
-         */
-        exchangeId: string;
-        /**
-         * The type of data source to execute from
-         */
-        type: DataSourceType;
-    };
-    query?: never;
-    url: '/backtest/{exchangeId}/{type}/execute';
+    prepareJobId: string;
+    strategyId: StrategyId;
+    /**
+     * When true, the worker uploads emitted signals to object storage and the
+     * response includes `signalsUrl` / `signalsId` fields. Defaults to false.
+     *
+     */
+    storeSignals?: boolean;
+  };
+  path: {
+    /**
+     * ID of the exchange for the backtesting process
+     */
+    exchangeId: string;
+    /**
+     * The type of data source to execute from
+     */
+    type: DataSourceType;
+  };
+  query?: never;
+  url: "/backtest/{exchangeId}/{type}/execute";
 };
 
 export type ExecuteBacktestErrors = {
-    /**
-     * Invalid request or parameters
-     */
-    400: ResponseError;
-    /**
-     * Prepare job not found or expired
-     */
-    404: ResponseError;
-    /**
-     * Rate limited (global queue at capacity or per-user limit reached)
-     */
-    429: ResponseError;
+  /**
+   * Invalid request or parameters
+   */
+  400: ResponseError;
+  /**
+   * Prepare job not found or expired
+   */
+  404: ResponseError;
+  /**
+   * Rate limited (global queue at capacity or per-user limit reached)
+   */
+  429: ResponseError;
 };
 
-export type ExecuteBacktestError = ExecuteBacktestErrors[keyof ExecuteBacktestErrors];
+export type ExecuteBacktestError =
+  ExecuteBacktestErrors[keyof ExecuteBacktestErrors];
 
 export type ExecuteBacktestResponses = {
-    /**
-     * Execute task accepted (queued for processing)
-     */
-    202: AcceptedJob;
+  /**
+   * Execute task accepted (queued for processing)
+   */
+  202: AcceptedJob;
 };
 
-export type ExecuteBacktestResponse = ExecuteBacktestResponses[keyof ExecuteBacktestResponses];
+export type ExecuteBacktestResponse =
+  ExecuteBacktestResponses[keyof ExecuteBacktestResponses];
 
 export type CancelBacktestData = {
-    body?: never;
-    path: {
-        exchangeId: string;
-        type: DataSourceType;
-        /**
-         * Job ID returned by `POST /execute`
-         */
-        jobId: string;
-    };
-    query?: never;
-    url: '/backtest/{exchangeId}/{type}/execute/{jobId}';
+  body?: never;
+  path: {
+    exchangeId: string;
+    type: DataSourceType;
+    /**
+     * Job ID returned by `POST /execute`
+     */
+    jobId: string;
+  };
+  query?: never;
+  url: "/backtest/{exchangeId}/{type}/execute/{jobId}";
 };
 
 export type CancelBacktestErrors = {
-    /**
-     * Execution not found
-     */
-    404: ResponseError;
+  /**
+   * Execution not found
+   */
+  404: ResponseError;
 };
 
-export type CancelBacktestError = CancelBacktestErrors[keyof CancelBacktestErrors];
+export type CancelBacktestError =
+  CancelBacktestErrors[keyof CancelBacktestErrors];
 
 export type CancelBacktestResponses = {
-    /**
-     * Cancellation request accepted
-     */
-    200: {
-        status?: 'cancelling';
-        jobId?: string;
-    };
+  /**
+   * Cancellation request accepted
+   */
+  200: {
+    status?: "cancelling";
+    jobId?: string;
+  };
 };
 
-export type CancelBacktestResponse = CancelBacktestResponses[keyof CancelBacktestResponses];
+export type CancelBacktestResponse =
+  CancelBacktestResponses[keyof CancelBacktestResponses];
 
 export type GetBacktestResultData = {
-    body?: never;
-    path: {
-        /**
-         * ID of the exchange for the backtesting process
-         */
-        exchangeId: string;
-        /**
-         * The type of data source to execute from
-         */
-        type: DataSourceType;
-        /**
-         * Job ID returned by `POST /execute`
-         */
-        jobId: string;
-    };
-    query?: never;
-    url: '/backtest/{exchangeId}/{type}/execute/{jobId}';
+  body?: never;
+  path: {
+    /**
+     * ID of the exchange for the backtesting process
+     */
+    exchangeId: string;
+    /**
+     * The type of data source to execute from
+     */
+    type: DataSourceType;
+    /**
+     * Job ID returned by `POST /execute`
+     */
+    jobId: string;
+  };
+  query?: never;
+  url: "/backtest/{exchangeId}/{type}/execute/{jobId}";
 };
 
 export type GetBacktestResultErrors = {
-    /**
-     * Invalid request or parameters
-     */
-    400: ResponseError;
-    /**
-     * Execution job not found
-     */
-    404: ResponseError;
+  /**
+   * Invalid request or parameters
+   */
+  400: ResponseError;
+  /**
+   * Execution job not found
+   */
+  404: ResponseError;
 };
 
-export type GetBacktestResultError = GetBacktestResultErrors[keyof GetBacktestResultErrors];
+export type GetBacktestResultError =
+  GetBacktestResultErrors[keyof GetBacktestResultErrors];
 
 export type GetBacktestResultResponses = {
-    /**
-     * Backtesting execution result
-     */
-    200: BacktestJobResult;
-    /**
-     * The job is known but its result is not readable yet — keep polling.
-     *
-     * Returned in two situations, both of which mean "ask again", never "you are done":
-     * the job has not produced its result yet, or the job reached a terminal status while
-     * its stored result could not be read back. The response body is an empty object: it
-     * deliberately carries no `state`, so a client cannot mistake it for a finished result.
-     *
-     * Treat any `202` as a signal to continue the poll loop under your existing timeout.
-     * Never treat it as a terminal outcome.
-     *
-     */
-    202: {
-        [key: string]: never;
-    };
+  /**
+   * Backtesting execution result
+   */
+  200: BacktestJobResult;
+  /**
+   * The job is known but its result is not readable yet — keep polling.
+   *
+   * Returned in two situations, both of which mean "ask again", never "you are done":
+   * the job has not produced its result yet, or the job reached a terminal status while
+   * its stored result could not be read back. The response body is an empty object: it
+   * deliberately carries no `state`, so a client cannot mistake it for a finished result.
+   *
+   * Treat any `202` as a signal to continue the poll loop under your existing timeout.
+   * Never treat it as a terminal outcome.
+   *
+   */
+  202: {
+    [key: string]: never;
+  };
 };
 
-export type GetBacktestResultResponse = GetBacktestResultResponses[keyof GetBacktestResultResponses];
+export type GetBacktestResultResponse =
+  GetBacktestResultResponses[keyof GetBacktestResultResponses];
 
 export type ClientOptions = {
-    baseUrl: 'https://api.staging.qtsurfer.com/v1' | 'https://api.qtsurfer.com/v1' | (string & {});
+  baseUrl:
+    | "https://api.staging.qtsurfer.com/v1"
+    | "https://api.qtsurfer.com/v1"
+    | (string & {});
 };
