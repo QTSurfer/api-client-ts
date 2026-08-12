@@ -68,20 +68,30 @@ pluggable token stores so callers don't reinvent that plumbing.
 
 All operations are exported as standalone functions; every operation accepts an `Options` object and returns `{ data, error, response }`.
 
+The table is exhaustive: `src/generated/` is produced from the OpenAPI spec, so **all 18 operations**
+the spec declares are exported. The rows below describe **spec version 0.107.0**, which is versioned
+independently of this package.
+
 | Function | Method | Path | Purpose |
 | -------- | ------ | ---- | ------- |
 | `authenticate` | POST | `/auth/token` | Exchange an API key for a short-lived JWT |
-| `listExchanges` | GET | `/exchanges` | List available exchanges |
-| `listInstruments` | GET | `/exchange/{exchangeId}/instruments` | List instruments for an exchange |
-| `downloadTickers` | GET | `/exchange/{exchangeId}/tickers/{base}/{quote}` | Download one hour of tickers as Lastra/Parquet |
-| `downloadKlines` | GET | `/exchange/{exchangeId}/klines/{base}/{quote}` | Download one hour of klines as Lastra/Parquet |
-| `compileStrategy` | POST | `/strategy` | Compile a strategy |
-| `getStrategy` | GET | `/strategy/{strategyId}` | Poll strategy compilation status |
-| `prepareBacktest` | POST | `/backtesting/prepare` | Start a data preparation job |
-| `getPrepareStatus` | GET | `/backtesting/prepare/{jobId}` | Poll preparation status |
-| `executeBacktest` | POST | `/backtesting/execute` | Start a backtest execution |
-| `cancelBacktest` | POST | `/backtesting/execute/{jobId}/cancel` | Cancel a running execution |
-| `getBacktestResult` | GET | `/backtesting/execute/{jobId}` | Poll or fetch execution results |
+| `listExchanges` | GET | `/exchanges` | List the available exchanges |
+| `listInstruments` | GET | `/exchange/{exchangeId}/instruments` | List an exchange's instruments (default spot segment) |
+| `listSegmentInstruments` | GET | `/exchange/{exchangeId}/{segment}/instruments` | List an exchange segment's instruments |
+| `downloadTickers` | GET | `/exchange/{exchangeId}/tickers/{base}/{quote}` | Download one hour of tickers as a Lastra segment |
+| `downloadKlines` | GET | `/exchange/{exchangeId}/klines/{base}/{quote}` | Download one hour of klines as a Lastra segment |
+| `compileStrategy` | POST | `/strategy` | Compile and register a strategy |
+| `validateStrategy` | POST | `/strategy/{strategyId}/validate` | Check that a registered strategy can actually run |
+| `getStrategy` | GET | `/strategy/{strategyId}` | Get a strategy by id, including its validation state |
+| `prepareBacktest` | POST | `/backtest/{exchangeId}/{type}/prepare` | Prepare backtest data |
+| `getPrepareStatus` | GET | `/backtest/{exchangeId}/{type}/prepare/{jobId}` | Get the status of a prepare job |
+| `executeSweep` | POST | `/backtest/{exchangeId}/{type}/executeSweep/{requestId}` | Execute a parameter sweep over prepared data |
+| `getSweepResult` | GET | `/backtest/{exchangeId}/{type}/executeSweep/{requestId}/{sweepId}` | Get sweep progress and results |
+| `cancelSweep` | DELETE | `/backtest/{exchangeId}/{type}/executeSweep/{requestId}/{sweepId}` | Cancel a running parameter sweep |
+| `getSweepSensitivity` | GET | `/backtest/{exchangeId}/{type}/executeSweep/{requestId}/{sweepId}/sensitivity` | Get sweep sensitivity surfaces |
+| `executeBacktest` | POST | `/backtest/{exchangeId}/{type}/execute` | Execute a compiled strategy against a prepared dataset |
+| `cancelBacktest` | DELETE | `/backtest/{exchangeId}/{type}/execute/{jobId}` | Cancel a running backtest execution |
+| `getBacktestResult` | GET | `/backtest/{exchangeId}/{type}/execute/{jobId}` | Get the result of a backtest execution job |
 
 All generated types (`Exchange`, `InstrumentDetail`, `BacktestJobResult`, `PrepareJobState`, `ResultMap`, etc.) are re-exported from the root.
 

@@ -553,6 +553,12 @@ export const getSweepSensitivity = <ThrowOnError extends boolean = false>(
     GetSweepSensitivityError,
     ThrowOnError
   >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
     url: "/backtest/{exchangeId}/{type}/executeSweep/{requestId}/{sweepId}/sensitivity",
     ...options,
   });

@@ -1,5 +1,36 @@
 # @qtsurfer/api-client
 
+## 0.9.0
+
+### Minor Changes
+
+- Regenerate for OpenAPI 0.107.0: a sweep now says why its leaderboard is empty, and the validate
+  endpoint returns one type instead of two.
+
+  `ExecuteSweepResult` gains an optional `failReason: string` — the cause reported by the **first**
+  shard to fail. The backend always sent this; it was simply undeclared, so the client discarded it.
+  It is what turns an inscrutable result into an answer: a sweep can come back `PARTIAL` with
+  `progress.done: 0` because the strategy could not be loaded at all, and until now the response said
+  only that nothing finished. Read it next to `progress.failedShards` — first failure wins, so it
+  names one cause rather than all of them, and it is absent on a healthy sweep.
+
+  `validateStrategy`'s `202` response is now typed as `StrategyState`, the same type as its `200`,
+  where it used to be an anonymous `{ strategyId, validation: 'pending' }`. `ValidateStrategyResponse`
+  therefore collapses from a two-member union to plain `StrategyState`. Nothing is lost: the old
+  inline shape was a subset, and fields such as `compiledAt`, `requiredSources` and `detail` are now
+  reachable on the result without narrowing first, where before the union made them a type error.
+  `validation` was already the full `'not_validated' | 'pending' | 'passed' | 'failed'` union when
+  read off the response, and still is.
+
+  The payload was never how you tell the two responses apart, and that has not changed: discriminate
+  on `response.status === 202`. A `200` can also carry `validation: 'pending'`, left by a check an
+  earlier call queued, so only the status code says whether _this_ call started one.
+
+  `getSweepSensitivity` now declares bearer security, which it had been missing. Callers who
+  configure the client with the `auth` option rather than a static `Authorization` header were
+  getting no token attached to that one request; they now do. No change for callers who set the
+  header themselves.
+
 ## 0.8.0
 
 ### Minor Changes

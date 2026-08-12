@@ -541,6 +541,11 @@ export type ExecuteSweepResult = {
    * How many train/test splits the `pbo` figure was averaged over.
    */
   pboSplits?: number;
+  /**
+   * Why the sweep produced less than it should have — the cause reported by the **first** shard to fail, not a list. It is what turns an inscrutable empty leaderboard into an answer: a sweep can come back `PARTIAL` with `done: 0` because the strategy could not be loaded at all, and without this the response says only that nothing finished.
+   * First failure wins and later ones are not recorded, so on a sweep where several shards failed for different reasons this names one of them rather than all. Absent when no shard reported a cause, which is the normal case for a healthy sweep — read it together with `progress.failedShards` rather than as a count of anything.
+   */
+  failReason?: string;
   progress: SweepProgress;
   /**
    * Total result rows currently available.
@@ -1219,11 +1224,14 @@ export type ValidateStrategyResponses = {
    * Validation queued. Not a terminal outcome — poll `GET /strategy/{strategyId}` until
    * `validation` leaves `pending`.
    *
+   * The body is a `StrategyState` carrying only what is known at this point: the id and
+   * `validation: pending`. **The status code, not the body, is what tells the two responses
+   * apart** — a `200` can also carry `validation: pending`, left by a check an earlier call
+   * queued. So `202` means *this call started a check*, while `pending` means only *a check
+   * is outstanding*.
+   *
    */
-  202: {
-    strategyId: StrategyId;
-    validation: "pending";
-  };
+  202: StrategyState;
 };
 
 export type ValidateStrategyResponse =

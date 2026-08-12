@@ -1020,6 +1020,12 @@ export const ExecuteSweepResultSchema = {
       description:
         "How many train/test splits the `pbo` figure was averaged over.",
     },
+    failReason: {
+      type: "string",
+      description: `Why the sweep produced less than it should have — the cause reported by the **first** shard to fail, not a list. It is what turns an inscrutable empty leaderboard into an answer: a sweep can come back \`PARTIAL\` with \`done: 0\` because the strategy could not be loaded at all, and without this the response says only that nothing finished.
+First failure wins and later ones are not recorded, so on a sweep where several shards failed for different reasons this names one of them rather than all. Absent when no shard reported a cause, which is the normal case for a healthy sweep — read it together with \`progress.failedShards\` rather than as a count of anything.`,
+      example: "Failed to load/configure strategy",
+    },
     progress: {
       $ref: "#/components/schemas/SweepProgress",
     },
