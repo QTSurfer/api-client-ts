@@ -23,6 +23,6 @@ export type CreateClientConfig<T extends DefaultClientOptions = ClientOptions> =
 
 export const client = createClient(
   createConfig<ClientOptions>({
-    baseUrl: "https://api.staging.qtsurfer.com/v1",
+    baseUrl: "https://api.qtsurfer.net/v1",
   })
 );

@@ -1,5 +1,38 @@
 # @qtsurfer/api-client
 
+## 0.10.0
+
+### Minor Changes
+
+- Regenerate for OpenAPI 0.109.2: list, release, and read back a registered strategy's source.
+
+  `listStrategies` (`GET /strategies`) returns every strategy you have registered and not deleted,
+  most recently compiled first — `{ strategies: [{ strategyId, compiledAt?, requiredSources? }] }`.
+  Never a `404`; an empty array if you have none. It deliberately omits validation state to stay
+  cheap regardless of how many strategies you have — check a specific one with the existing
+  `getStrategy`.
+
+  `deleteStrategy` (`DELETE /strategy/{strategyId}`) removes a strategy from both `getStrategy` and
+  `listStrategies`, returning `{ strategyId, deleted: true }`, or a `404 ResponseError` if there is no
+  such registered strategy for you. Re-submitting the same source to `compileStrategy` afterwards
+  registers a **new** strategy with a **new** id — it does not "undelete" the old one. Backtests
+  already run against the deleted strategy are completely unaffected, and deleting your own copy of a
+  strategy never touches anyone else's copy of the same source (e.g. a shared/marketplace listing).
+
+  `getStrategyCode` (`GET /strategy/{strategyId}/code`) returns the exact source last submitted for a
+  strategy id — `{ strategyId, code: string }`. Its `404 ResponseError` covers two cases that are
+  deliberately indistinguishable from the response alone: the id was never registered by you, or it
+  resolves only through a shared/marketplace reference that carries no source of its own.
+
+  `StrategyState` gains an optional `_links: StrategyLinks`, currently just `{ code: HalLink }`
+  pointing at `getStrategyCode`. It is present on a full `StrategyState` body — `getStrategy`, and
+  `validateStrategy`'s already-validated `200` — and absent from that same operation's `202`, which
+  stays a deliberately partial stub.
+
+  Docs-only: the spec's staging server entry is now `https://api.qtsurfer.net` (previously
+  `https://api.staging.qtsurfer.com`). This is the host generated clients were already defaulting to
+  in practice; nothing about where requests go has changed.
+
 ## 0.9.0
 
 ### Minor Changes

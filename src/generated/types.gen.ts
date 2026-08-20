@@ -68,6 +68,23 @@ export type InstrumentLinks = {
 };
 
 /**
+ * HAL `_links` for a strategy — present on a full `StrategyState` body (`GET
+ * /strategy/{strategyId}`, and `POST /strategy/{strategyId}/validate`'s already-validated
+ * `200`), absent from that same endpoint's `202` — a deliberately partial stub carrying only
+ * what is known before a check has even started. Following `code` can still `404` once
+ * present: it documents its own honest "nothing to return" for a strategy with no source of
+ * its own (a `REFERENCE` marketplace copy, or one resolved only through the platform's shared
+ * pool). This link says where to look, not that something is there.
+ *
+ */
+export type StrategyLinks = {
+  /**
+   * Link to this strategy's registered source, `GET /strategy/{strategyId}/code`.
+   */
+  code: HalLink;
+};
+
+/**
  * A HAL link object (Hypertext Application Language)
  */
 export type HalLink = {
@@ -801,6 +818,27 @@ export type Notice = {
 };
 
 /**
+ * One entry from `GET /strategies` — the same provenance a full `StrategyState` carries
+ * (`compiledAt`, `requiredSources`), without its validation state, so listing stays cheap
+ * regardless of how many strategies you have registered. Check a specific strategy's
+ * validation with `GET /strategy/{strategyId}`.
+ *
+ */
+export type StrategySummary = {
+  strategyId: StrategyId;
+  /**
+   * When the live compilation was produced.
+   */
+  compiledAt?: string;
+  /**
+   * The market data this strategy needs. Absent, not empty, when it could
+   * not be established without constructing the strategy.
+   *
+   */
+  requiredSources?: Array<string>;
+};
+
+/**
  * What is known about a registered strategy: that it compiled, and what validating it found.
  *
  * **`validation: passed` does not mean the strategy is correct.** It means the class loaded and
@@ -871,6 +909,7 @@ export type StrategyState = {
    *
    */
   validationStalled?: boolean;
+  _links?: StrategyLinks;
 };
 
 export type AuthTokenResponse = {
@@ -1155,6 +1194,26 @@ export type DownloadKlinesResponses = {
 export type DownloadKlinesResponse =
   DownloadKlinesResponses[keyof DownloadKlinesResponses];
 
+export type ListStrategiesData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/strategies";
+};
+
+export type ListStrategiesResponses = {
+  /**
+   * Your registered strategies. An empty array if you have none — this is never a `404`.
+   *
+   */
+  200: {
+    strategies: Array<StrategySummary>;
+  };
+};
+
+export type ListStrategiesResponse =
+  ListStrategiesResponses[keyof ListStrategiesResponses];
+
 export type CompileStrategyData = {
   /**
    * Raw strategy Java source code
@@ -1237,6 +1296,41 @@ export type ValidateStrategyResponses = {
 export type ValidateStrategyResponse =
   ValidateStrategyResponses[keyof ValidateStrategyResponses];
 
+export type DeleteStrategyData = {
+  body?: never;
+  path: {
+    /**
+     * The id returned by `POST /strategy`
+     */
+    strategyId: StrategyId;
+  };
+  query?: never;
+  url: "/strategy/{strategyId}";
+};
+
+export type DeleteStrategyErrors = {
+  /**
+   * No such registered strategy for this user
+   */
+  404: ResponseError;
+};
+
+export type DeleteStrategyError =
+  DeleteStrategyErrors[keyof DeleteStrategyErrors];
+
+export type DeleteStrategyResponses = {
+  /**
+   * Deleted
+   */
+  200: {
+    strategyId: StrategyId;
+    deleted: true;
+  };
+};
+
+export type DeleteStrategyResponse =
+  DeleteStrategyResponses[keyof DeleteStrategyResponses];
+
 export type GetStrategyData = {
   body?: never;
   path: {
@@ -1267,6 +1361,44 @@ export type GetStrategyResponses = {
 
 export type GetStrategyResponse =
   GetStrategyResponses[keyof GetStrategyResponses];
+
+export type GetStrategyCodeData = {
+  body?: never;
+  path: {
+    /**
+     * The id returned by `POST /strategy`
+     */
+    strategyId: StrategyId;
+  };
+  query?: never;
+  url: "/strategy/{strategyId}/code";
+};
+
+export type GetStrategyCodeErrors = {
+  /**
+   * No such registered strategy for this user, or nothing to read for this id
+   */
+  404: ResponseError;
+};
+
+export type GetStrategyCodeError =
+  GetStrategyCodeErrors[keyof GetStrategyCodeErrors];
+
+export type GetStrategyCodeResponses = {
+  /**
+   * The registered source
+   */
+  200: {
+    strategyId: StrategyId;
+    /**
+     * Raw strategy Java source code, exactly as registered.
+     */
+    code: string;
+  };
+};
+
+export type GetStrategyCodeResponse =
+  GetStrategyCodeResponses[keyof GetStrategyCodeResponses];
 
 export type PrepareBacktestData = {
   /**
@@ -1674,7 +1806,7 @@ export type GetBacktestResultResponse =
 
 export type ClientOptions = {
   baseUrl:
-    | "https://api.staging.qtsurfer.com/v1"
+    | "https://api.qtsurfer.net/v1"
     | "https://api.qtsurfer.com/v1"
     | (string & {});
 };

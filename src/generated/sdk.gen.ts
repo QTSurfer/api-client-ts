@@ -23,15 +23,23 @@ import type {
   DownloadKlinesData,
   DownloadKlinesResponse,
   DownloadKlinesError,
+  ListStrategiesData,
+  ListStrategiesResponse,
   CompileStrategyData,
   CompileStrategyResponse,
   CompileStrategyError,
   ValidateStrategyData,
   ValidateStrategyResponse,
   ValidateStrategyError,
+  DeleteStrategyData,
+  DeleteStrategyResponse,
+  DeleteStrategyError,
   GetStrategyData,
   GetStrategyResponse,
   GetStrategyError,
+  GetStrategyCodeData,
+  GetStrategyCodeResponse,
+  GetStrategyCodeError,
   PrepareBacktestData,
   PrepareBacktestResponse,
   PrepareBacktestError,
@@ -239,6 +247,35 @@ export const downloadKlines = <ThrowOnError extends boolean = false>(
 };
 
 /**
+ * List your registered strategies
+ * Every strategy you have registered and not deleted, most recently compiled first.
+ *
+ * Each entry carries the same provenance `GET /strategy/{strategyId}` does — `compiledAt`,
+ * `requiredSources` — but not its validation state, so listing stays cheap regardless of how
+ * many strategies you have. Check a specific strategy's validation with `GET
+ * /strategy/{strategyId}`.
+ *
+ */
+export const listStrategies = <ThrowOnError extends boolean = false>(
+  options?: Options<ListStrategiesData, ThrowOnError>
+) => {
+  return (options?.client ?? _heyApiClient).get<
+    ListStrategiesResponse,
+    unknown,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/strategies",
+    ...options,
+  });
+};
+
+/**
  * Compile and register a strategy
  * Compiles raw strategy source and registers it, returning its `strategyId`.
  *
@@ -321,6 +358,39 @@ export const validateStrategy = <ThrowOnError extends boolean = false>(
 };
 
 /**
+ * Release a registered strategy
+ * Removes a strategy from `GET /strategy/{strategyId}` and `GET /strategies`. This is not
+ * undone by re-submitting the same source to `POST /strategy` — that registers a new
+ * strategy, with a new id.
+ *
+ * **Backtests you already ran against this strategy are unaffected.** Deleting it stops it
+ * from counting against your account and stops you from validating or re-running it under
+ * this id — it does not erase what already happened.
+ *
+ * Only removes a strategy you registered yourself. If you copied someone else's strategy
+ * (a shared/marketplace listing), deleting your copy never affects theirs, or anyone else's.
+ *
+ */
+export const deleteStrategy = <ThrowOnError extends boolean = false>(
+  options: Options<DeleteStrategyData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).delete<
+    DeleteStrategyResponse,
+    DeleteStrategyError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/strategy/{strategyId}",
+    ...options,
+  });
+};
+
+/**
  * Get a strategy by id, including its validation state
  * Reports that the strategy is registered — implied by a `200` at all — and what validating it
  * found.
@@ -344,6 +414,36 @@ export const getStrategy = <ThrowOnError extends boolean = false>(
       },
     ],
     url: "/strategy/{strategyId}",
+    ...options,
+  });
+};
+
+/**
+ * Get a registered strategy's source, if you still have one to read
+ * The exact source you last submitted for this id — the same text `POST /strategy` derives
+ * `strategyId` from, whitespace and comments included.
+ *
+ * **"If available", not "always".** A strategy you resolve only through a shared/marketplace
+ * listing you copied by reference carries no source of its own, and reads as a `404` here the
+ * same as a `strategyId` you never registered — that is the honest answer either way, since
+ * from this endpoint's point of view nothing is there to return.
+ *
+ */
+export const getStrategyCode = <ThrowOnError extends boolean = false>(
+  options: Options<GetStrategyCodeData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).get<
+    GetStrategyCodeResponse,
+    GetStrategyCodeError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/strategy/{strategyId}/code",
     ...options,
   });
 };

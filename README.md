@@ -68,8 +68,8 @@ pluggable token stores so callers don't reinvent that plumbing.
 
 All operations are exported as standalone functions; every operation accepts an `Options` object and returns `{ data, error, response }`.
 
-The table is exhaustive: `src/generated/` is produced from the OpenAPI spec, so **all 18 operations**
-the spec declares are exported. The rows below describe **spec version 0.107.0**, which is versioned
+The table is exhaustive: `src/generated/` is produced from the OpenAPI spec, so **all 21 operations**
+the spec declares are exported. The rows below describe **spec version 0.109.2**, which is versioned
 independently of this package.
 
 | Function | Method | Path | Purpose |
@@ -80,9 +80,12 @@ independently of this package.
 | `listSegmentInstruments` | GET | `/exchange/{exchangeId}/{segment}/instruments` | List an exchange segment's instruments |
 | `downloadTickers` | GET | `/exchange/{exchangeId}/tickers/{base}/{quote}` | Download one hour of tickers as a Lastra segment |
 | `downloadKlines` | GET | `/exchange/{exchangeId}/klines/{base}/{quote}` | Download one hour of klines as a Lastra segment |
+| `listStrategies` | GET | `/strategies` | List your registered strategies, most recently compiled first |
 | `compileStrategy` | POST | `/strategy` | Compile and register a strategy |
 | `validateStrategy` | POST | `/strategy/{strategyId}/validate` | Check that a registered strategy can actually run |
 | `getStrategy` | GET | `/strategy/{strategyId}` | Get a strategy by id, including its validation state |
+| `deleteStrategy` | DELETE | `/strategy/{strategyId}` | Release a registered strategy |
+| `getStrategyCode` | GET | `/strategy/{strategyId}/code` | Get a registered strategy's source, if you still have one to read |
 | `prepareBacktest` | POST | `/backtest/{exchangeId}/{type}/prepare` | Prepare backtest data |
 | `getPrepareStatus` | GET | `/backtest/{exchangeId}/{type}/prepare/{jobId}` | Get the status of a prepare job |
 | `executeSweep` | POST | `/backtest/{exchangeId}/{type}/executeSweep/{requestId}` | Execute a parameter sweep over prepared data |

@@ -104,6 +104,30 @@ export const InstrumentLinksSchema = {
   },
 } as const;
 
+export const StrategyLinksSchema = {
+  description: `HAL \`_links\` for a strategy — present on a full \`StrategyState\` body (\`GET
+/strategy/{strategyId}\`, and \`POST /strategy/{strategyId}/validate\`'s already-validated
+\`200\`), absent from that same endpoint's \`202\` — a deliberately partial stub carrying only
+what is known before a check has even started. Following \`code\` can still \`404\` once
+present: it documents its own honest "nothing to return" for a strategy with no source of
+its own (a \`REFERENCE\` marketplace copy, or one resolved only through the platform's shared
+pool). This link says where to look, not that something is there.
+`,
+  type: "object",
+  required: ["code"],
+  properties: {
+    code: {
+      allOf: [
+        {
+          $ref: "#/components/schemas/HalLink",
+        },
+      ],
+      description:
+        "Link to this strategy's registered source, `GET /strategy/{strategyId}/code`.",
+    },
+  },
+} as const;
+
 export const HalLinkSchema = {
   description: "A HAL link object (Hypertext Application Language)",
   type: "object",
@@ -1417,6 +1441,35 @@ real run (\`execute\`) is a clean bill of health, while an empty list from
   },
 } as const;
 
+export const StrategySummarySchema = {
+  type: "object",
+  description: `One entry from \`GET /strategies\` — the same provenance a full \`StrategyState\` carries
+(\`compiledAt\`, \`requiredSources\`), without its validation state, so listing stays cheap
+regardless of how many strategies you have registered. Check a specific strategy's
+validation with \`GET /strategy/{strategyId}\`.
+`,
+  required: ["strategyId"],
+  properties: {
+    strategyId: {
+      $ref: "#/components/schemas/strategyId",
+    },
+    compiledAt: {
+      type: "string",
+      format: "date-time",
+      description: "When the live compilation was produced.",
+    },
+    requiredSources: {
+      type: "array",
+      description: `The market data this strategy needs. Absent, not empty, when it could
+not be established without constructing the strategy.
+`,
+      items: {
+        type: "string",
+      },
+    },
+  },
+} as const;
+
 export const StrategyStateSchema = {
   type: "object",
   description: `What is known about a registered strategy: that it compiled, and what validating it found.
@@ -1505,6 +1558,9 @@ went; it simply reached less than a full run would.
 the strategy — the check has not run. Stop waiting and re-request it later.
 `,
     },
+    _links: {
+      $ref: "#/components/schemas/StrategyLinks",
+    },
   },
   example: {
     strategyId: "6bsh31ikwkuivhtgcoa6s4",
@@ -1520,6 +1576,11 @@ the strategy — the check has not run. Stop waiting and re-request it later.
         provenance: "compile-dry-run",
       },
     ],
+    _links: {
+      code: {
+        href: "/v1/strategy/6bsh31ikwkuivhtgcoa6s4/code",
+      },
+    },
   },
 } as const;
 
