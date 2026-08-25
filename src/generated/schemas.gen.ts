@@ -269,10 +269,36 @@ export const DataSourceTypeSchema = {
 
 export const PrepareRequestSchema = {
   type: "object",
-  required: ["instrument", "from", "to"],
+  description: `Two shapes, chosen by the \`exchangeId\` path segment. Against a managed exchange,
+\`instrument\` is required and \`datasetId\`/\`datasetVersionId\` are ignored. Against the
+reserved \`exchangeId: user\`, send \`datasetId\` instead of \`instrument\` — \`instrument\` is
+ignored there, since it comes from the dataset itself.
+`,
+  required: ["from", "to"],
   properties: {
     instrument: {
-      $ref: "#/components/schemas/Instrument",
+      allOf: [
+        {
+          $ref: "#/components/schemas/Instrument",
+        },
+      ],
+      description: `Required unless \`exchangeId\` is the reserved value \`user\`, in which case send
+\`datasetId\` instead.
+`,
+    },
+    datasetId: {
+      type: "string",
+      description: `Only for \`exchangeId: user\`: the id of a dataset created via \`POST /datasets\`, in place
+of \`instrument\`. Ignored against a managed exchange.
+`,
+      example: "ds_3f9a1c2e7b0d4a5f",
+    },
+    datasetVersionId: {
+      type: "string",
+      description: `Only for \`exchangeId: user\`, and optional even then: pins a specific past version of
+the dataset instead of its current one. Defaults to the dataset's current version.
+`,
+      example: "dsv_8e2b4f19c6a03d7e",
     },
     from: {
       type: "string",
@@ -300,7 +326,23 @@ resampling and stored alongside the native blob in cache. Coarser-than-
 source values must be exact multiples of the source cadence — invalid
 labels return \`400\`.
 `,
-      enum: ["1s", "5s", "1m", "5m", "15m", "1h", "4h", "1d"],
+      enum: [
+        "1s",
+        "5s",
+        "1m",
+        "3m",
+        "5m",
+        "15m",
+        "30m",
+        "1h",
+        "2h",
+        "4h",
+        "8h",
+        "12h",
+        "1d",
+        "1w",
+        "1q",
+      ],
       default: "1s",
     },
   },
@@ -363,12 +405,19 @@ is always terminal (\`Completed\`) — decide from
 } as const;
 
 export const PrepareJobStateSchema = {
-  description: `State of a single-instrument prepare job — the \`JobState\` shape plus a per-hour
-data-coverage summary. A single-instrument prepare is always terminal
-(\`status: Completed\`): the client decides what to do from \`coverageRatio\` (e.g.
-execute if it is at or above a chosen threshold) rather than polling for missing
-hours that may never arrive — a missing hour for one instrument usually means low
-activity, not missing data.
+  description: `State of a single-instrument prepare job — the \`JobState\` shape plus a coverage summary.
+A single-instrument prepare is always terminal (\`status: Completed\`): the client decides
+what to do from \`coverageRatio\` (e.g. execute if it is at or above a chosen threshold)
+rather than polling for missing hours that may never arrive — a missing hour for one
+instrument usually means low activity, not missing data.
+
+**Two coverage shapes, by exchange vs. dataset.** Against a managed exchange, coverage is
+walked hour by hour: \`totalHours\`/\`hoursWithData\`/\`hoursWithoutData\`. Against a
+dataset-backed prepare (\`exchangeId: user\`), coverage is reported on the dataset's own
+cadence grid instead — hour-walking a daily dataset would report \`1/24\` and read as
+broken — via \`cadence\`/\`gaps\`/\`largestGapSteps\`; \`totalHours\`/\`hoursWithData\`/
+\`hoursWithoutData\` are absent in that case. \`dataFrom\`/\`dataTo\`/\`coverageRatio\` are present
+either way, computed accordingly.
 `,
   allOf: [
     {
@@ -396,25 +445,54 @@ activity, not missing data.
           format: "double",
           minimum: 0,
           maximum: 1,
-          description: `\`hoursWithData / totalHours\` in \`[0,1]\` (\`1.0\` when \`totalHours\` is 0) — the
-fraction of hours in the requested range that have served data.
+          description: `Against a managed exchange: \`hoursWithData / totalHours\` in \`[0,1]\` (\`1.0\` when
+\`totalHours\` is 0), the fraction of hours in the requested range that have served
+data. Against a dataset (\`exchangeId: user\`): \`rows / expectedStepsAtCadence\`
+over the dataset version's own range — echoing what ingest computed once, not
+recomputed against a narrower prepare request.
 `,
           example: 0.994,
         },
         totalHours: {
           type: "integer",
-          description: "Number of whole hours in the requested prepare range.",
+          description: `Number of whole hours in the requested prepare range. Managed exchanges only —
+absent for a dataset-backed prepare.
+`,
           example: 168,
         },
         hoursWithData: {
           type: "integer",
-          description: "Number of hours in the range that have data.",
+          description: `Number of hours in the range that have data. Managed exchanges only — absent for
+a dataset-backed prepare.
+`,
           example: 167,
+        },
+        cadence: {
+          type: "string",
+          description: `The dataset version's own discovered cadence (e.g. \`1m\`, \`1h\`). Only present for a
+dataset-backed prepare (\`exchangeId: user\`).
+`,
+          example: "1m",
+        },
+        gaps: {
+          type: "integer",
+          description: `Number of gaps in the dataset version at its own cadence, as discovered at ingest
+time. Only present for a dataset-backed prepare.
+`,
+          example: 0,
+        },
+        largestGapSteps: {
+          type: "integer",
+          description: `The largest gap in the dataset version, in units of its own cadence step. Only
+present for a dataset-backed prepare.
+`,
+          example: 0,
         },
         hoursWithoutData: {
           type: "array",
-          description:
-            "One entry per hour in the range that has no data, with a rationale.",
+          description: `One entry per hour in the range that has no data, with a rationale. Managed
+exchanges only — absent for a dataset-backed prepare.
+`,
           items: {
             type: "object",
             properties: {
@@ -1580,6 +1658,244 @@ the strategy — the check has not run. Stop waiting and re-request it later.
       code: {
         href: "/v1/strategy/6bsh31ikwkuivhtgcoa6s4/code",
       },
+    },
+  },
+} as const;
+
+export const DatasetSchema = {
+  type: "object",
+  description: `A dataset's own metadata — not its data. \`currentVersionId\` is what a prepare against
+\`exchangeId: user\` reads by default; see \`DatasetVersion\` for what a version carries.
+
+\`from\`/\`to\`/\`cadence\` mirror that current version's own discovered range and cadence, so
+you don't need a second call to \`GET /datasets/{datasetId}/uploads/{uploadId}\` just to see
+what a dataset covers. Absent until a version exists.
+`,
+  required: ["datasetId", "name", "type", "instrument", "createdAt"],
+  properties: {
+    datasetId: {
+      type: "string",
+      description: "Opaque id, returned by `POST /datasets`.",
+      example: "ds_3f9a1c2e7b0d4a5f",
+    },
+    name: {
+      type: "string",
+      description: "Unique among your datasets.",
+      example: "My BTC ticks",
+    },
+    type: {
+      type: "string",
+      enum: ["ticker"],
+      description: "Always `ticker` in v1.",
+      example: "ticker",
+    },
+    instrument: {
+      $ref: "#/components/schemas/Instrument",
+    },
+    createdAt: {
+      type: "string",
+      format: "date-time",
+      description: "When the dataset was created.",
+      example: "2026-08-20T09:00:00Z",
+    },
+    currentVersionId: {
+      type: "string",
+      description: `The id of the most recently finalized, successfully ingested version. Absent until at
+least one upload has finished ingesting.
+`,
+      example: "dsv_8e2b4f19c6a03d7e",
+    },
+    updatedAt: {
+      type: "string",
+      format: "date-time",
+      description:
+        "When `currentVersionId` last changed. Absent until it has a value.",
+      example: "2026-08-20T09:04:12Z",
+    },
+    from: {
+      type: "string",
+      format: "date-time",
+      description: `Start of \`currentVersionId\`'s own data range, as discovered at ingest time. Absent
+until a version exists.
+`,
+      example: "2026-03-01T00:00:00Z",
+    },
+    to: {
+      type: "string",
+      format: "date-time",
+      description: `End of \`currentVersionId\`'s own data range, as discovered at ingest time. Absent until
+a version exists.
+`,
+      example: "2026-03-08T00:00:00Z",
+    },
+    cadence: {
+      type: "string",
+      description: `\`currentVersionId\`'s own discovered bar cadence (e.g. \`1s\`, \`1m\`, \`1h\`). Absent until a
+version exists.
+`,
+      example: "1m",
+    },
+  },
+} as const;
+
+export const DatasetWithLinksSchema = {
+  description:
+    "A `Dataset` plus a self link. Returned by `GET /datasets/{datasetId}`.",
+  allOf: [
+    {
+      $ref: "#/components/schemas/Dataset",
+    },
+    {
+      type: "object",
+      properties: {
+        _links: {
+          type: "object",
+          properties: {
+            self: {
+              type: "object",
+              properties: {
+                href: {
+                  type: "string",
+                  example: "/v1/datasets/ds_3f9a1c2e7b0d4a5f",
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  ],
+} as const;
+
+export const DatasetCreatedSchema = {
+  description: `A \`Dataset\` plus the first upload session — the presigned URL to PUT the file to.
+`,
+  allOf: [
+    {
+      $ref: "#/components/schemas/Dataset",
+    },
+    {
+      type: "object",
+      required: ["uploadId", "upload"],
+      properties: {
+        uploadId: {
+          type: "string",
+          description: `Identifies this upload session. Pass to
+\`POST /datasets/{datasetId}/uploads/{uploadId}/finalize\` once the PUT completes.
+`,
+          example: "up_1a2b3c4d5e6f7a8b",
+        },
+        upload: {
+          type: "object",
+          required: ["url", "expiresInMinutes"],
+          properties: {
+            url: {
+              type: "string",
+              description: `Presigned URL. \`PUT\` the raw CSV file here directly — no \`Authorization\`
+header, no other API credentials.
+`,
+              example:
+                "https://storage.qtsurfer.com/00000000-.../uploads/up_1a2b3c4d5e6f7a8b/raw.csv?X-Amz-...",
+            },
+            expiresInMinutes: {
+              type: "integer",
+              description: "How long `url` stays valid.",
+              example: 15,
+            },
+          },
+        },
+      },
+    },
+  ],
+} as const;
+
+export const DatasetVersionSchema = {
+  type: "object",
+  description: `One successfully ingested upload. Cadence and timestamp unit are discovered from the file,
+not declared by the caller (D-11).
+`,
+  required: ["datasetId"],
+  properties: {
+    datasetId: {
+      type: "string",
+      example: "ds_3f9a1c2e7b0d4a5f",
+    },
+    id: {
+      type: "string",
+      description:
+        "The version id. Pass as `datasetVersionId` on `POST .../prepare` to pin it.",
+      example: "dsv_8e2b4f19c6a03d7e",
+    },
+    bytes: {
+      type: "integer",
+      description: "Size of the uploaded file.",
+      example: 4831022,
+    },
+    rows: {
+      type: "integer",
+      description: "Number of data rows.",
+      example: 86400,
+    },
+    cadence: {
+      type: "string",
+      description: "The discovered bar cadence (e.g. `1s`, `1m`, `1h`).",
+      example: "1s",
+    },
+    timestampUnit: {
+      type: "string",
+      enum: ["iso", "s", "ms", "us"],
+      description: `The unit the \`timestamp\` column was uploaded in — ISO-8601, or the epoch band its
+numeric values fell in (seconds, millis, or micros).
+`,
+      example: "iso",
+    },
+    gaps: {
+      type: "integer",
+      description: "Number of gaps at the discovered cadence.",
+      example: 0,
+    },
+    largestGapSteps: {
+      type: "integer",
+      description: "The largest gap, in units of the discovered cadence step.",
+      example: 0,
+    },
+  },
+} as const;
+
+export const DatasetUploadStateSchema = {
+  type: "object",
+  description: `Progress of one upload, from staged through ingest. Postgres-backed once a version exists,
+so \`ready\`/\`failed\` are permanent answers; \`uploading\`/\`ingesting\` reflect in-flight state
+that can itself age out — see the \`404\` case on \`GET .../uploads/{uploadId}\`.
+`,
+  required: ["uploadId", "status"],
+  properties: {
+    uploadId: {
+      type: "string",
+      example: "up_1a2b3c4d5e6f7a8b",
+    },
+    status: {
+      type: "string",
+      enum: ["uploading", "ingesting", "ready", "failed"],
+      description: `* \`uploading\` — the file was PUT to the presigned URL, but \`finalize\` has not been
+  called yet.
+* \`ingesting\` — \`finalize\` was called; the worker is parsing and validating the file.
+* \`ready\` — ingested successfully. \`version\` carries the result.
+* \`failed\` — ingest rejected the file (e.g. bad CSV contract, mixed timestamp units).
+`,
+      example: "ready",
+    },
+    jobId: {
+      type: "string",
+      description: "The ingest job id, while `status` is `ingesting`.",
+    },
+    version: {
+      allOf: [
+        {
+          $ref: "#/components/schemas/DatasetVersion",
+        },
+      ],
+      description: "Present when `status` is `ready` or `failed`.",
     },
   },
 } as const;

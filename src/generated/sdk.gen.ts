@@ -67,6 +67,23 @@ import type {
   GetBacktestResultData,
   GetBacktestResultResponse,
   GetBacktestResultError,
+  ListDatasetsData,
+  ListDatasetsResponse,
+  CreateDatasetData,
+  CreateDatasetResponse,
+  CreateDatasetError,
+  DeleteDatasetData,
+  DeleteDatasetResponse,
+  DeleteDatasetError,
+  GetDatasetData,
+  GetDatasetResponse,
+  GetDatasetError,
+  FinalizeDatasetUploadData,
+  FinalizeDatasetUploadResponse,
+  FinalizeDatasetUploadError,
+  GetDatasetUploadData,
+  GetDatasetUploadResponse,
+  GetDatasetUploadError,
 } from "./types.gen";
 import { client as _heyApiClient } from "./client.gen";
 
@@ -456,6 +473,11 @@ export const getStrategyCode = <ThrowOnError extends boolean = false>(
  * The same params always return the same `jobId` (idempotent). Repeated calls with identical
  * params do not enqueue duplicate work — they reuse the existing job.
  *
+ * **`exchangeId: user` is reserved for your own uploaded data.** Instead of a managed
+ * exchange, it prepares from a dataset you created via `POST /datasets` (see the **Dataset**
+ * endpoints) — send `datasetId` in place of `instrument`. See `PrepareRequest` below for the
+ * two request shapes.
+ *
  */
 export const prepareBacktest = <ThrowOnError extends boolean = false>(
   options: Options<PrepareBacktestData, ThrowOnError>
@@ -484,6 +506,9 @@ export const prepareBacktest = <ThrowOnError extends boolean = false>(
  * Get the status of a prepare job
  * Retrieves the current state of the prepare job identified by `jobId`.
  * Poll until `status` is `Completed`, `Failed`, or `Aborted`.
+ *
+ * For a dataset prepare (`exchangeId: user`), coverage is reported against the dataset's own
+ * cadence grid instead of hours — see `cadence`/`gaps`/`largestGapSteps` on `PrepareJobState`.
  *
  */
 export const getPrepareStatus = <ThrowOnError extends boolean = false>(
@@ -676,6 +701,9 @@ export const getSweepSensitivity = <ThrowOnError extends boolean = false>(
  * The same params (same `prepareJobId`, `strategyId`, `storeSignals`) always return the same
  * `jobId` (idempotent).
  *
+ * Works unchanged for a dataset-backed prepare (`exchangeId: user`) — the request body is
+ * identical either way, since the instrument and range are recovered from `prepareJobId`.
+ *
  */
 export const executeBacktest = <ThrowOnError extends boolean = false>(
   options: Options<ExecuteBacktestData, ThrowOnError>
@@ -752,6 +780,175 @@ export const getBacktestResult = <ThrowOnError extends boolean = false>(
       },
     ],
     url: "/backtest/{exchangeId}/{type}/execute/{jobId}",
+    ...options,
+  });
+};
+
+/**
+ * List your datasets
+ * Every dataset you have created and not deleted, most recently created first. Never a `404`
+ * — an empty array if you have none, same convention as `GET /strategies`.
+ *
+ */
+export const listDatasets = <ThrowOnError extends boolean = false>(
+  options?: Options<ListDatasetsData, ThrowOnError>
+) => {
+  return (options?.client ?? _heyApiClient).get<
+    ListDatasetsResponse,
+    unknown,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/datasets",
+    ...options,
+  });
+};
+
+/**
+ * Create a dataset and get a URL to upload it to
+ * Creates a dataset AND its first upload session in one call — a presigned URL your client
+ * PUTs the file to directly, no API credentials involved in that PUT. Call
+ * `POST /datasets/{datasetId}/uploads/{uploadId}/finalize` once the upload completes to kick
+ * off ingest.
+ *
+ * v1 is ticker data only — `type` is not a request field, it is always `"ticker"` in the
+ * response. `instrument` must be a plain spot pair (`BASE/QUOTE`, exactly one `/`); derivative
+ * forms (e.g. `BTC/USDT:USDT`) are rejected.
+ *
+ * **Upload format.** A CSV with a header row. Required columns: `timestamp` (ISO-8601, or
+ * numeric epoch seconds/millis/micros — detected from the first row, then enforced for every
+ * later row), `close`. Optional columns: `open`, `high`, `low`, `volume`, `quoteVolume`,
+ * `bid`, `bidSize`, `ask`, `askSize`. Cadence and timestamp unit are discovered from the data,
+ * not declared.
+ *
+ */
+export const createDataset = <ThrowOnError extends boolean = false>(
+  options: Options<CreateDatasetData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).post<
+    CreateDatasetResponse,
+    CreateDatasetError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/datasets",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  });
+};
+
+/**
+ * Delete a dataset
+ * Soft-delete — the dataset stops appearing in `GET /datasets`/`GET /datasets/{datasetId}` and
+ * can no longer be prepared from, but its object data is reclaimed later rather than purged
+ * inline, so a backtest already running against one of its versions is not disrupted.
+ *
+ */
+export const deleteDataset = <ThrowOnError extends boolean = false>(
+  options: Options<DeleteDatasetData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).delete<
+    DeleteDatasetResponse,
+    DeleteDatasetError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/datasets/{datasetId}",
+    ...options,
+  });
+};
+
+/**
+ * Get a dataset by id
+ * Detail for one dataset, plus a self link.
+ */
+export const getDataset = <ThrowOnError extends boolean = false>(
+  options: Options<GetDatasetData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).get<
+    GetDatasetResponse,
+    GetDatasetError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/datasets/{datasetId}",
+    ...options,
+  });
+};
+
+/**
+ * Finalize an uploaded file and start ingest
+ * Call once the file has been PUT to the `upload.url` from `POST /datasets`. Enqueues ingest
+ * and returns immediately; poll
+ * `GET /datasets/{datasetId}/uploads/{uploadId}` for the result.
+ *
+ * Idempotent — a repeat finalize of the same upload returns the same `jobId` rather than
+ * enqueueing a second ingest.
+ *
+ */
+export const finalizeDatasetUpload = <ThrowOnError extends boolean = false>(
+  options: Options<FinalizeDatasetUploadData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).post<
+    FinalizeDatasetUploadResponse,
+    FinalizeDatasetUploadError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/datasets/{datasetId}/uploads/{uploadId}/finalize",
+    ...options,
+  });
+};
+
+/**
+ * Get the state of an upload/ingest
+ * Poll after `POST .../finalize` until `status` is `ready` or `failed`. Also reports
+ * `uploading` (finalize not called yet, but the file was PUT) before you finalize at all.
+ *
+ */
+export const getDatasetUpload = <ThrowOnError extends boolean = false>(
+  options: Options<GetDatasetUploadData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).get<
+    GetDatasetUploadResponse,
+    GetDatasetUploadError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/datasets/{datasetId}/uploads/{uploadId}",
     ...options,
   });
 };

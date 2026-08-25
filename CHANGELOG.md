@@ -1,5 +1,19 @@
 # @qtsurfer/api-client
 
+## 0.11.0
+
+### Minor Changes
+
+- Regenerate for OpenAPI 0.110.1: prepare and backtest against a dataset you upload yourself, not just a managed exchange.
+
+  Six new endpoints back a **Dataset** you own: `listDatasets`/`createDataset` (`GET`/`POST /datasets`), `getDataset`/`deleteDataset` (`GET`/`DELETE /datasets/{datasetId}`), `finalizeDatasetUpload` (`POST /datasets/{datasetId}/uploads/{uploadId}/finalize`), and `getDatasetUpload` (`GET /datasets/{datasetId}/uploads/{uploadId}`). `createDataset` returns a `DatasetCreated` — the dataset plus a presigned URL to `PUT` a CSV to directly, no API credentials needed on that request. Once the `PUT` completes, `finalizeDatasetUpload` kicks off ingestion; poll `getDatasetUpload` for the resulting `DatasetVersion` (cadence and range are discovered from the file, not declared by the caller). `listDatasets` never 404s — an empty array means you have none — and `deleteDataset` is a soft delete: it stops the dataset appearing in `listDatasets`/`getDataset`, but backtests already run against it are unaffected.
+
+  To actually backtest against one, use the reserved `exchangeId: user` on the _existing_ prepare/execute endpoints. `PrepareRequest.instrument` is now optional — required only against a managed exchange — and gains `datasetId`/`datasetVersionId`: send `datasetId` in place of `instrument` against `exchangeId: user` (`datasetVersionId` optionally pins a past version; omitted, it defaults to the dataset's current one). `PrepareJobState` reports coverage differently for a dataset-backed prepare: `cadence`/`gaps`/`largestGapSteps` (the dataset's own discovered cadence, gap count, and largest gap) replace the hour-walked `totalHours`/`hoursWithData`/`hoursWithoutData`, which are absent in that case — `dataFrom`/`dataTo`/`coverageRatio` are present either way. `executeBacktest`/`executeSweep` are unchanged; they only ever consume the `prepareJobId` from whichever prepare ran.
+
+  `PrepareRequest.cadence` widens from `1s | 5s | 1m | 5m | 15m | 1h | 4h | 1d` to also include `3m | 30m | 2h | 8h | 12h | 1w | 1q`.
+
+  `@qtsurfer/sdk` does not yet wrap these six dataset endpoints into higher-level calls — use this package's generated functions directly for dataset management until that lands.
+
 ## 0.10.0
 
 ### Minor Changes

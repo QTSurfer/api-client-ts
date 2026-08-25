@@ -180,8 +180,32 @@ export type Exchange = {
  */
 export type DataSourceType = "ticker";
 
+/**
+ * Two shapes, chosen by the `exchangeId` path segment. Against a managed exchange,
+ * `instrument` is required and `datasetId`/`datasetVersionId` are ignored. Against the
+ * reserved `exchangeId: user`, send `datasetId` instead of `instrument` — `instrument` is
+ * ignored there, since it comes from the dataset itself.
+ *
+ */
 export type PrepareRequest = {
-  instrument: Instrument;
+  /**
+   * Required unless `exchangeId` is the reserved value `user`, in which case send
+   * `datasetId` instead.
+   *
+   */
+  instrument?: Instrument;
+  /**
+   * Only for `exchangeId: user`: the id of a dataset created via `POST /datasets`, in place
+   * of `instrument`. Ignored against a managed exchange.
+   *
+   */
+  datasetId?: string;
+  /**
+   * Only for `exchangeId: user`, and optional even then: pins a specific past version of
+   * the dataset instead of its current one. Defaults to the dataset's current version.
+   *
+   */
+  datasetVersionId?: string;
   /**
    * Start date for the preparation process. Supports the following formats:
    * - ISO-8601 (e.g. 2024-12-14T23:59:59Z)
@@ -206,7 +230,22 @@ export type PrepareRequest = {
    * labels return `400`.
    *
    */
-  cadence?: "1s" | "5s" | "1m" | "5m" | "15m" | "1h" | "4h" | "1d";
+  cadence?:
+    | "1s"
+    | "5s"
+    | "1m"
+    | "3m"
+    | "5m"
+    | "15m"
+    | "30m"
+    | "1h"
+    | "2h"
+    | "4h"
+    | "8h"
+    | "12h"
+    | "1d"
+    | "1w"
+    | "1q";
 };
 
 /**
@@ -248,12 +287,19 @@ export type JobState = {
 };
 
 /**
- * State of a single-instrument prepare job — the `JobState` shape plus a per-hour
- * data-coverage summary. A single-instrument prepare is always terminal
- * (`status: Completed`): the client decides what to do from `coverageRatio` (e.g.
- * execute if it is at or above a chosen threshold) rather than polling for missing
- * hours that may never arrive — a missing hour for one instrument usually means low
- * activity, not missing data.
+ * State of a single-instrument prepare job — the `JobState` shape plus a coverage summary.
+ * A single-instrument prepare is always terminal (`status: Completed`): the client decides
+ * what to do from `coverageRatio` (e.g. execute if it is at or above a chosen threshold)
+ * rather than polling for missing hours that may never arrive — a missing hour for one
+ * instrument usually means low activity, not missing data.
+ *
+ * **Two coverage shapes, by exchange vs. dataset.** Against a managed exchange, coverage is
+ * walked hour by hour: `totalHours`/`hoursWithData`/`hoursWithoutData`. Against a
+ * dataset-backed prepare (`exchangeId: user`), coverage is reported on the dataset's own
+ * cadence grid instead — hour-walking a daily dataset would report `1/24` and read as
+ * broken — via `cadence`/`gaps`/`largestGapSteps`; `totalHours`/`hoursWithData`/
+ * `hoursWithoutData` are absent in that case. `dataFrom`/`dataTo`/`coverageRatio` are present
+ * either way, computed accordingly.
  *
  */
 export type PrepareJobState = JobState & {
@@ -266,21 +312,48 @@ export type PrepareJobState = JobState & {
    */
   dataTo?: string | null;
   /**
-   * `hoursWithData / totalHours` in `[0,1]` (`1.0` when `totalHours` is 0) — the
-   * fraction of hours in the requested range that have served data.
+   * Against a managed exchange: `hoursWithData / totalHours` in `[0,1]` (`1.0` when
+   * `totalHours` is 0), the fraction of hours in the requested range that have served
+   * data. Against a dataset (`exchangeId: user`): `rows / expectedStepsAtCadence`
+   * over the dataset version's own range — echoing what ingest computed once, not
+   * recomputed against a narrower prepare request.
    *
    */
   coverageRatio?: number;
   /**
-   * Number of whole hours in the requested prepare range.
+   * Number of whole hours in the requested prepare range. Managed exchanges only —
+   * absent for a dataset-backed prepare.
+   *
    */
   totalHours?: number;
   /**
-   * Number of hours in the range that have data.
+   * Number of hours in the range that have data. Managed exchanges only — absent for
+   * a dataset-backed prepare.
+   *
    */
   hoursWithData?: number;
   /**
-   * One entry per hour in the range that has no data, with a rationale.
+   * The dataset version's own discovered cadence (e.g. `1m`, `1h`). Only present for a
+   * dataset-backed prepare (`exchangeId: user`).
+   *
+   */
+  cadence?: string;
+  /**
+   * Number of gaps in the dataset version at its own cadence, as discovered at ingest
+   * time. Only present for a dataset-backed prepare.
+   *
+   */
+  gaps?: number;
+  /**
+   * The largest gap in the dataset version, in units of its own cadence step. Only
+   * present for a dataset-backed prepare.
+   *
+   */
+  largestGapSteps?: number;
+  /**
+   * One entry per hour in the range that has no data, with a rationale. Managed
+   * exchanges only — absent for a dataset-backed prepare.
+   *
    */
   hoursWithoutData?: Array<{
     /**
@@ -912,6 +985,165 @@ export type StrategyState = {
   _links?: StrategyLinks;
 };
 
+/**
+ * A dataset's own metadata — not its data. `currentVersionId` is what a prepare against
+ * `exchangeId: user` reads by default; see `DatasetVersion` for what a version carries.
+ *
+ * `from`/`to`/`cadence` mirror that current version's own discovered range and cadence, so
+ * you don't need a second call to `GET /datasets/{datasetId}/uploads/{uploadId}` just to see
+ * what a dataset covers. Absent until a version exists.
+ *
+ */
+export type Dataset = {
+  /**
+   * Opaque id, returned by `POST /datasets`.
+   */
+  datasetId: string;
+  /**
+   * Unique among your datasets.
+   */
+  name: string;
+  /**
+   * Always `ticker` in v1.
+   */
+  type: "ticker";
+  instrument: Instrument;
+  /**
+   * When the dataset was created.
+   */
+  createdAt: string;
+  /**
+   * The id of the most recently finalized, successfully ingested version. Absent until at
+   * least one upload has finished ingesting.
+   *
+   */
+  currentVersionId?: string;
+  /**
+   * When `currentVersionId` last changed. Absent until it has a value.
+   */
+  updatedAt?: string;
+  /**
+   * Start of `currentVersionId`'s own data range, as discovered at ingest time. Absent
+   * until a version exists.
+   *
+   */
+  from?: string;
+  /**
+   * End of `currentVersionId`'s own data range, as discovered at ingest time. Absent until
+   * a version exists.
+   *
+   */
+  to?: string;
+  /**
+   * `currentVersionId`'s own discovered bar cadence (e.g. `1s`, `1m`, `1h`). Absent until a
+   * version exists.
+   *
+   */
+  cadence?: string;
+};
+
+/**
+ * A `Dataset` plus a self link. Returned by `GET /datasets/{datasetId}`.
+ */
+export type DatasetWithLinks = Dataset & {
+  _links?: {
+    self?: {
+      href?: string;
+    };
+  };
+};
+
+/**
+ * A `Dataset` plus the first upload session — the presigned URL to PUT the file to.
+ *
+ */
+export type DatasetCreated = Dataset & {
+  /**
+   * Identifies this upload session. Pass to
+   * `POST /datasets/{datasetId}/uploads/{uploadId}/finalize` once the PUT completes.
+   *
+   */
+  uploadId: string;
+  upload: {
+    /**
+     * Presigned URL. `PUT` the raw CSV file here directly — no `Authorization`
+     * header, no other API credentials.
+     *
+     */
+    url: string;
+    /**
+     * How long `url` stays valid.
+     */
+    expiresInMinutes: number;
+  };
+};
+
+/**
+ * One successfully ingested upload. Cadence and timestamp unit are discovered from the file,
+ * not declared by the caller (D-11).
+ *
+ */
+export type DatasetVersion = {
+  datasetId: string;
+  /**
+   * The version id. Pass as `datasetVersionId` on `POST .../prepare` to pin it.
+   */
+  id?: string;
+  /**
+   * Size of the uploaded file.
+   */
+  bytes?: number;
+  /**
+   * Number of data rows.
+   */
+  rows?: number;
+  /**
+   * The discovered bar cadence (e.g. `1s`, `1m`, `1h`).
+   */
+  cadence?: string;
+  /**
+   * The unit the `timestamp` column was uploaded in — ISO-8601, or the epoch band its
+   * numeric values fell in (seconds, millis, or micros).
+   *
+   */
+  timestampUnit?: "iso" | "s" | "ms" | "us";
+  /**
+   * Number of gaps at the discovered cadence.
+   */
+  gaps?: number;
+  /**
+   * The largest gap, in units of the discovered cadence step.
+   */
+  largestGapSteps?: number;
+};
+
+/**
+ * Progress of one upload, from staged through ingest. Postgres-backed once a version exists,
+ * so `ready`/`failed` are permanent answers; `uploading`/`ingesting` reflect in-flight state
+ * that can itself age out — see the `404` case on `GET .../uploads/{uploadId}`.
+ *
+ */
+export type DatasetUploadState = {
+  uploadId: string;
+  /**
+   * * `uploading` — the file was PUT to the presigned URL, but `finalize` has not been
+   * called yet.
+   * * `ingesting` — `finalize` was called; the worker is parsing and validating the file.
+   * * `ready` — ingested successfully. `version` carries the result.
+   * * `failed` — ingest rejected the file (e.g. bad CSV contract, mixed timestamp units).
+   *
+   */
+  status: "uploading" | "ingesting" | "ready" | "failed";
+  /**
+   * The ingest job id, while `status` is `ingesting`.
+   */
+  jobId?: string;
+  /**
+   * Present when `status` is `ready` or `failed`.
+   */
+  version?: DatasetVersion;
+};
+
 export type AuthTokenResponse = {
   /**
    * Short-lived HS256 JWT. Send as `Authorization: Bearer <token>` on all other endpoints.
@@ -1407,7 +1639,9 @@ export type PrepareBacktestData = {
   body: PrepareRequest;
   path: {
     /**
-     * ID of the exchange to prepare the backtesting for
+     * ID of the exchange to prepare the backtesting for (e.g. `binance`), or the reserved
+     * value `user` to prepare from a dataset you uploaded instead of a managed exchange.
+     *
      */
     exchangeId: string;
     /**
@@ -1422,17 +1656,23 @@ export type PrepareBacktestData = {
 export type PrepareBacktestErrors = {
   /**
    * Invalid request or parameters. Also returned when `from` is older than the configured
-   * lookback window or `to` is in the future.
+   * lookback window or `to` is in the future. For `exchangeId: user`, also returned when
+   * the dataset's current upload has not finished ingesting, or `cadence` asks for a finer
+   * granularity than the dataset's own discovered cadence, or the requested range exceeds
+   * your tier's range limit.
    *
    */
   400: ResponseError;
   /**
-   * Exchange or data source type not found
+   * Exchange or data source type not found. For `exchangeId: user`, also returned when
+   * `datasetId` (or a pinned `datasetVersionId`) doesn't exist or isn't yours.
+   *
    */
   404: ResponseError;
   /**
    * Rate limited. Returned when the global queue exceeds capacity or the user has too many
-   * active backtests.
+   * active backtests. Does not apply to `exchangeId: user` — a dataset prepare reads an
+   * already-ingested file rather than enqueueing worker capacity.
    *
    */
   429: ResponseError;
@@ -1455,7 +1695,9 @@ export type GetPrepareStatusData = {
   body?: never;
   path: {
     /**
-     * ID of the exchange for the backtesting process
+     * ID of the exchange for the backtesting process, or the reserved value `user` for a
+     * dataset-backed prepare.
+     *
      */
     exchangeId: string;
     /**
@@ -1668,7 +1910,9 @@ export type ExecuteBacktestData = {
   };
   path: {
     /**
-     * ID of the exchange for the backtesting process
+     * ID of the exchange for the backtesting process, or the reserved value `user` if
+     * `prepareJobId` came from a dataset-backed prepare.
+     *
      */
     exchangeId: string;
     /**
@@ -1803,6 +2047,214 @@ export type GetBacktestResultResponses = {
 
 export type GetBacktestResultResponse =
   GetBacktestResultResponses[keyof GetBacktestResultResponses];
+
+export type ListDatasetsData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/datasets";
+};
+
+export type ListDatasetsResponses = {
+  /**
+   * Your datasets
+   */
+  200: {
+    datasets: Array<Dataset>;
+  };
+};
+
+export type ListDatasetsResponse =
+  ListDatasetsResponses[keyof ListDatasetsResponses];
+
+export type CreateDatasetData = {
+  /**
+   * The dataset to create
+   */
+  body: {
+    /**
+     * A name unique among your datasets. `409` if already taken.
+     */
+    name: string;
+    instrument: Instrument;
+  };
+  path?: never;
+  query?: never;
+  url: "/datasets";
+};
+
+export type CreateDatasetErrors = {
+  /**
+   * Invalid request, or `instrument` is not a plain spot pair
+   */
+  400: ResponseError;
+  /**
+   * You already have a dataset with this `name`
+   */
+  409: ResponseError;
+  /**
+   * Your tier's dataset count limit is reached. Delete one, or upgrade.
+   */
+  429: ResponseError;
+};
+
+export type CreateDatasetError = CreateDatasetErrors[keyof CreateDatasetErrors];
+
+export type CreateDatasetResponses = {
+  /**
+   * Dataset created, with an upload session ready for its first version
+   */
+  201: DatasetCreated;
+};
+
+export type CreateDatasetResponse =
+  CreateDatasetResponses[keyof CreateDatasetResponses];
+
+export type DeleteDatasetData = {
+  body?: never;
+  path: {
+    /**
+     * The id returned by `POST /datasets`
+     */
+    datasetId: string;
+  };
+  query?: never;
+  url: "/datasets/{datasetId}";
+};
+
+export type DeleteDatasetErrors = {
+  /**
+   * No such dataset for this user, or already deleted
+   */
+  404: ResponseError;
+};
+
+export type DeleteDatasetError = DeleteDatasetErrors[keyof DeleteDatasetErrors];
+
+export type DeleteDatasetResponses = {
+  /**
+   * Deleted
+   */
+  200: {
+    datasetId: string;
+    deleted: true;
+  };
+};
+
+export type DeleteDatasetResponse =
+  DeleteDatasetResponses[keyof DeleteDatasetResponses];
+
+export type GetDatasetData = {
+  body?: never;
+  path: {
+    /**
+     * The id returned by `POST /datasets`
+     */
+    datasetId: string;
+  };
+  query?: never;
+  url: "/datasets/{datasetId}";
+};
+
+export type GetDatasetErrors = {
+  /**
+   * No such dataset for this user
+   */
+  404: ResponseError;
+};
+
+export type GetDatasetError = GetDatasetErrors[keyof GetDatasetErrors];
+
+export type GetDatasetResponses = {
+  /**
+   * Dataset detail
+   */
+  200: DatasetWithLinks;
+};
+
+export type GetDatasetResponse = GetDatasetResponses[keyof GetDatasetResponses];
+
+export type FinalizeDatasetUploadData = {
+  body?: never;
+  path: {
+    /**
+     * The id returned by `POST /datasets`
+     */
+    datasetId: string;
+    /**
+     * The `uploadId` returned by `POST /datasets`
+     */
+    uploadId: string;
+  };
+  query?: never;
+  url: "/datasets/{datasetId}/uploads/{uploadId}/finalize";
+};
+
+export type FinalizeDatasetUploadErrors = {
+  /**
+   * No such dataset for this user, or nothing was PUT to `upload.url` yet — a finalize with
+   * nothing to finalize.
+   *
+   */
+  404: ResponseError;
+  /**
+   * The uploaded file exceeds your tier's size limit for a dataset.
+   */
+  413: ResponseError;
+};
+
+export type FinalizeDatasetUploadError =
+  FinalizeDatasetUploadErrors[keyof FinalizeDatasetUploadErrors];
+
+export type FinalizeDatasetUploadResponses = {
+  /**
+   * Ingest queued
+   */
+  202: {
+    jobId: string;
+  };
+};
+
+export type FinalizeDatasetUploadResponse =
+  FinalizeDatasetUploadResponses[keyof FinalizeDatasetUploadResponses];
+
+export type GetDatasetUploadData = {
+  body?: never;
+  path: {
+    /**
+     * The id returned by `POST /datasets`
+     */
+    datasetId: string;
+    /**
+     * The `uploadId` returned by `POST /datasets`
+     */
+    uploadId: string;
+  };
+  query?: never;
+  url: "/datasets/{datasetId}/uploads/{uploadId}";
+};
+
+export type GetDatasetUploadErrors = {
+  /**
+   * No such dataset for this user, or genuinely nothing is known about this `uploadId` — no
+   * version, no in-flight job, and nothing was ever PUT to its upload URL.
+   *
+   */
+  404: ResponseError;
+};
+
+export type GetDatasetUploadError =
+  GetDatasetUploadErrors[keyof GetDatasetUploadErrors];
+
+export type GetDatasetUploadResponses = {
+  /**
+   * Current upload/ingest state
+   */
+  200: DatasetUploadState;
+};
+
+export type GetDatasetUploadResponse =
+  GetDatasetUploadResponses[keyof GetDatasetUploadResponses];
 
 export type ClientOptions = {
   baseUrl:
