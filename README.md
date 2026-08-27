@@ -68,8 +68,8 @@ pluggable token stores so callers don't reinvent that plumbing.
 
 All operations are exported as standalone functions; every operation accepts an `Options` object and returns `{ data, error, response }`.
 
-The table is exhaustive: `src/generated/` is produced from the OpenAPI spec, so **all 21 operations**
-the spec declares are exported. The rows below describe **spec version 0.109.2**, which is versioned
+The table is exhaustive: `src/generated/` is produced from the OpenAPI spec, so **all 28 operations**
+the spec declares are exported. The rows below describe **spec version 0.110.3**, which is versioned
 independently of this package.
 
 | Function | Method | Path | Purpose |
@@ -92,9 +92,16 @@ independently of this package.
 | `getSweepResult` | GET | `/backtest/{exchangeId}/{type}/executeSweep/{requestId}/{sweepId}` | Get sweep progress and results |
 | `cancelSweep` | DELETE | `/backtest/{exchangeId}/{type}/executeSweep/{requestId}/{sweepId}` | Cancel a running parameter sweep |
 | `getSweepSensitivity` | GET | `/backtest/{exchangeId}/{type}/executeSweep/{requestId}/{sweepId}/sensitivity` | Get sweep sensitivity surfaces |
+| `getSweepRunEquityCurve` | GET | `/backtest/{exchangeId}/{type}/executeSweep/{requestId}/{sweepId}/runs/{runIx}/equityCurve` | Get one sweep trial's equity curve |
 | `executeBacktest` | POST | `/backtest/{exchangeId}/{type}/execute` | Execute a compiled strategy against a prepared dataset |
 | `cancelBacktest` | DELETE | `/backtest/{exchangeId}/{type}/execute/{jobId}` | Cancel a running backtest execution |
 | `getBacktestResult` | GET | `/backtest/{exchangeId}/{type}/execute/{jobId}` | Get the result of a backtest execution job |
+| `listDatasets` | GET | `/datasets` | List your datasets |
+| `createDataset` | POST | `/datasets` | Create a dataset and obtain its first upload session |
+| `deleteDataset` | DELETE | `/datasets/{datasetId}` | Soft-delete a dataset |
+| `getDataset` | GET | `/datasets/{datasetId}` | Get dataset metadata |
+| `finalizeDatasetUpload` | POST | `/datasets/{datasetId}/uploads/{uploadId}/finalize` | Queue ingest after uploading a file |
+| `getDatasetUpload` | GET | `/datasets/{datasetId}/uploads/{uploadId}` | Get an upload's ingestion state |
 
 All generated types (`Exchange`, `InstrumentDetail`, `BacktestJobResult`, `PrepareJobState`, `ResultMap`, etc.) are re-exported from the root.
 

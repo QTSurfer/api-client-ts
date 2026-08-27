@@ -1,5 +1,11 @@
 # @qtsurfer/api-client
 
+## 0.12.0
+
+### Minor Changes
+
+- Regenerate for OpenAPI 0.110.3, including equity-curve transforms, retained sweep-run curves, and declared strategy properties.
+
 ## 0.11.0
 
 ### Minor Changes

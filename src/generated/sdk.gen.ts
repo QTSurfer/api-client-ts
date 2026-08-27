@@ -58,6 +58,9 @@ import type {
   GetSweepSensitivityData,
   GetSweepSensitivityResponse,
   GetSweepSensitivityError,
+  GetSweepRunEquityCurveData,
+  GetSweepRunEquityCurveResponse,
+  GetSweepRunEquityCurveError,
   ExecuteBacktestData,
   ExecuteBacktestResponse,
   ExecuteBacktestError,
@@ -315,6 +318,10 @@ export const listStrategies = <ThrowOnError extends boolean = false>(
  * - the id says nothing about *behaviour*. Two sources that compute the same thing by
  * different means are two strategies, because deciding otherwise would mean deciding program
  * equivalence.
+ *
+ * The response also lists `declaredProperties` — the sweep/execute param keys this strategy
+ * is known to accept, so a caller can catch a typo'd key before submitting a sweep instead of
+ * only learning it from a rejected one. See `DeclaredProperty`: best-effort, not exhaustive.
  *
  */
 export const compileStrategy = <ThrowOnError extends boolean = false>(
@@ -690,6 +697,41 @@ export const getSweepSensitivity = <ThrowOnError extends boolean = false>(
 };
 
 /**
+ * Get one sweep trial's equity curve
+ * The resource a leaderboard row's `equityCurve.url` points at — only reachable when that
+ * trial's curve was actually selected (`equityCurve.mode: topN` or `topPct` on the sweep
+ * submission, and this trial ranked among the winners). Returns the exact same
+ * `{points|timestamps+equities, meta}` shape a plain backtest's inline `equityCurve` carries.
+ *
+ * Query params reshape the response the same way a plain backtest's `equityCurve` options do.
+ * A param genuinely absent from the query string falls back to the `equityCurve` transform
+ * preference the sweep was submitted with — a param
+ * present but malformed does not fall back, it degrades the same way it always has. Above a
+ * server-side size threshold, the shape is forced regardless of either — `meta.outMode` in
+ * the response, not the query string or the submitted default, is the source of truth for
+ * what shape actually came back.
+ *
+ */
+export const getSweepRunEquityCurve = <ThrowOnError extends boolean = false>(
+  options: Options<GetSweepRunEquityCurveData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).get<
+    GetSweepRunEquityCurveResponse,
+    GetSweepRunEquityCurveError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/backtest/{exchangeId}/{type}/executeSweep/{requestId}/{sweepId}/runs/{runIx}/equityCurve",
+    ...options,
+  });
+};
+
+/**
  * Execute a compiled strategy against a prepared dataset
  * Enqueues an execute task that runs the strategy identified by `strategyId` over the data
  * prepared by the prepare job identified by `prepareJobId`. The instrument and date range are
@@ -698,8 +740,9 @@ export const getSweepSensitivity = <ThrowOnError extends boolean = false>(
  * Returns immediately with a `jobId`; poll `GET /backtest/{exchangeId}/{type}/execute/{jobId}`
  * for the result.
  *
- * The same params (same `prepareJobId`, `strategyId`, `storeSignals`) always return the same
- * `jobId` (idempotent).
+ * The same params (same `prepareJobId`, `strategyId`, `storeSignals`, `equityCurve`) always
+ * return the same `jobId` (idempotent) — a request that omits `equityCurve` dedupes exactly
+ * as it did before that field existed.
  *
  * Works unchanged for a dataset-backed prepare (`exchangeId: user`) — the request body is
  * identical either way, since the instrument and range are recovered from `prepareJobId`.

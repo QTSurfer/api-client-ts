@@ -705,7 +705,74 @@ export const ExecuteSweepRequestSchema = {
     walkForward: {
       $ref: "#/components/schemas/WalkForwardRequest",
     },
+    equityCurve: {
+      $ref: "#/components/schemas/EquityCurveRequest",
+    },
   },
+} as const;
+
+export const EquityCurveOptionsSchema = {
+  type: "object",
+  description:
+    "Requested equity-curve transform, applied server-side in a fixed pipeline order: `resample` (point count) then `differential` (encoding) then `outMode` (JSON shape) — each stage assumes the previous one already ran. A server-side size guard can still force a smaller/deflated shape above its thresholds regardless of what is requested here — see `EquityCurveMeta` for what actually happened.",
+  properties: {
+    resample: {
+      type: "integer",
+      minimum: 2,
+      description:
+        "Downsample to at most this many points (extrema-preserving — the global max/min and the exact first/last point are always kept). Omit for no downsampling.",
+    },
+    differential: {
+      type: "boolean",
+      default: false,
+      description:
+        "Delta-encode both fields from the second (post-resample) point onward.",
+    },
+    outMode: {
+      allOf: [
+        {
+          $ref: "#/components/schemas/EquityCurveOutMode",
+        },
+      ],
+      default: "ARRAY",
+      description: "Requested JSON shape.",
+    },
+  },
+} as const;
+
+export const EquityCurveRequestSchema = {
+  allOf: [
+    {
+      $ref: "#/components/schemas/EquityCurveOptions",
+    },
+    {
+      type: "object",
+      properties: {
+        mode: {
+          type: "string",
+          enum: ["auto", "topN", "topPct", "none"],
+          default: "auto",
+          description:
+            "Which trials keep their per-point equity curve. `auto` retains curves only while the accumulated size stays within server limits; `topN`/`topPct` retain curves for the best-ranked trials explicitly; `none` retains no curves.",
+        },
+        n: {
+          type: "integer",
+          minimum: 1,
+          description: "Trial count to retain when mode is topN.",
+        },
+        maxPct: {
+          type: "number",
+          format: "double",
+          exclusiveMinimum: 0,
+          maximum: 100,
+          description:
+            "Top percentage of trials to retain when mode is topPct.",
+        },
+      },
+    },
+  ],
+  description:
+    "Selection (`mode`/`n`/`maxPct`) plus the transform preference (`resample`/`differential`/`outMode`) applied by `GET .../equityCurve` whenever ITS OWN query params are absent, for a curve this sweep retained. The transform half never affects retention or `sweepId` — a caller can always override it per-request at read time regardless of what was submitted here.",
 } as const;
 
 export const WalkForwardRequestSchema = {
@@ -949,6 +1016,15 @@ export const SweepRunRowSchema = {
       type: "integer",
       format: "int64",
     },
+    equityCurve: {
+      allOf: [
+        {
+          $ref: "#/components/schemas/EquityCurveResult",
+        },
+      ],
+      description:
+        "Present only when this trial's curve was selected (`equityCurve.mode` was `topN`/`topPct` on the request, and this row ranked among the winners) — absent, not null, otherwise; a run that was never spilled and one that was spilled but not selected look identical here. Always a pointer today (`url` present, no inline points): a sweep's curves live in a spill store, not the response, until fetched separately. `GET` the `url` to fetch the curve itself; its own `meta` there is the real, possibly size-guarded outcome, while this outer `meta` is a raw, untransformed preview from selection time and can differ.",
+    },
   },
 } as const;
 
@@ -1086,6 +1162,7 @@ export const ExecuteSweepResultSchema = {
     "leaderboardSize",
     "truncated",
     "leaderboard",
+    "state",
   ],
   properties: {
     sweepId: {
@@ -1094,6 +1171,8 @@ export const ExecuteSweepResultSchema = {
     status: {
       type: "string",
       enum: ["RUNNING", "COMPLETED", "PARTIAL", "CANCELLED"],
+      description:
+        "The sweep's own status vocabulary — not the same set `state.status` below uses. See `state` for why.",
     },
     objective: {
       type: "string",
@@ -1147,6 +1226,17 @@ First failure wins and later ones are not recorded, so on a sweep where several 
     },
     walkForward: {
       $ref: "#/components/schemas/WalkForwardResult",
+    },
+    state: {
+      allOf: [
+        {
+          $ref: "#/components/schemas/JobState",
+        },
+      ],
+      description: `The same \`JobState\` shape a single-execute \`BacktestJobResult\` carries — not a sweep-specific lookalike, the actual type, so field names and timestamp formatting match exactly.
+\`state.status\` uses \`JobState\`'s own vocabulary (\`New\`/\`Started\`/\`Completed\`/ \`Aborted\`/\`Failed\`), mapped from the sweep's \`status\` field above rather than copying it: \`PARTIAL\` and \`CANCELLED\` both map to \`Aborted\`, because a sweep's \`PARTIAL\` is already terminal (some shards finished, some failed, nothing more is coming) unlike a single job's non-terminal \`Partial\`, which has no equivalent here at all.
+\`state.completed\` is real ticks processed on a plain sweep. On a \`walkForward\` sweep it is currently always \`0\` — the walk-forward fold runner was not wired to count ticks when this shipped, unlike the plain shard path.
+\`state.size\` is always \`0\` on every path (single execute, plain sweep, walk-forward alike) — nothing populates it anywhere yet. That is a known gap across the whole API, not a sweep-specific omission.`,
     },
   },
 } as const;
@@ -1389,26 +1479,36 @@ reading: a run that produced no trades often did so for a reason stated here.
       example: 8.75,
     },
     equityCurve: {
-      type: "array",
-      description:
-        "Equity curve over the backtest. Element 0 is an anchor at the backtest `from` with `initialCapital`; the remaining points are one sample per emitted yield, in order. Use it to plot the strategy's running equity without re-deriving it from the yield history.",
-      items: {
-        $ref: "#/components/schemas/EquityPoint",
-      },
-      example: [
+      allOf: [
         {
-          timestamp: 1700000000000,
-          equity: 100,
-        },
-        {
-          timestamp: 1700000060000,
-          equity: 110.5,
-        },
-        {
-          timestamp: 1700000120000,
-          equity: 90.25,
+          $ref: "#/components/schemas/EquityCurveResult",
         },
       ],
+      description:
+        "Equity curve over the backtest. `points[0]` (or `timestamps[0]`/`equities[0]` in `SHORT` mode) is an anchor at the backtest `from` with `initialCapital`; the remaining points are one sample per emitted yield, in order. Use it to plot the strategy's running equity without re-deriving it from the yield history. Always inline for a plain backtest today — never a pointer (`url`); that shape exists only for a sweep row's top-N winners.",
+      example: {
+        points: [
+          {
+            timestamp: 1700000000000,
+            equity: 100,
+          },
+          {
+            timestamp: 1700000060000,
+            equity: 110.5,
+          },
+          {
+            timestamp: 1700000120000,
+            equity: 90.25,
+          },
+        ],
+        meta: {
+          inputPointCount: 3,
+          outputPointCount: 3,
+          resampled: false,
+          differential: false,
+          outMode: "ARRAY",
+        },
+      },
     },
     signalCount: {
       type: "integer",
@@ -1475,6 +1575,104 @@ export const EquityPointSchema = {
   },
 } as const;
 
+export const EquityCurveOutModeSchema = {
+  type: "string",
+  enum: ["ARRAY", "SHORT"],
+  description:
+    "JSON shape for an equity curve's points. `ARRAY` is `[{timestamp, equity}, ...]`; `SHORT` is `{timestamps: [...], equities: [...]}` (parallel arrays, no repeated key text). The one schema shared by every place `outMode` appears, request or response, so the two cannot drift to different value sets.",
+} as const;
+
+export const EquityCurveMetaSchema = {
+  type: "object",
+  description:
+    "What the transform pipeline actually did, computed from the observed outcome — never a copy of what was requested. Lets a caller detect a forced or no-op transform (e.g. a `resample` ceiling already above the curve's size is a legal no-op, reported honestly as `resampled: false`).",
+  required: [
+    "inputPointCount",
+    "outputPointCount",
+    "resampled",
+    "differential",
+    "outMode",
+  ],
+  properties: {
+    inputPointCount: {
+      type: "integer",
+      description: "Size of the curve the transform pipeline received.",
+      example: 100000,
+    },
+    outputPointCount: {
+      type: "integer",
+      description:
+        "Size after the full pipeline (resample, then differential, then outMode).",
+      example: 100,
+    },
+    resampled: {
+      type: "boolean",
+      description:
+        "True only if the resample stage actually changed the point count.",
+    },
+    differential: {
+      type: "boolean",
+      description:
+        "True only if delta-encoding actually ran. Requesting it on a curve of 0 or 1 points has nothing to encode, so it does not run even if asked.",
+    },
+    outMode: {
+      allOf: [
+        {
+          $ref: "#/components/schemas/EquityCurveOutMode",
+        },
+      ],
+      description:
+        "The actual JSON shape served. Present even when the points themselves are not (a pointer curve, `EquityCurveResult.url`) — a caller resolving that URL separately still needs to know how to parse what it gets back before fetching it. May override an explicit request above a server-side size threshold; this field, not the request, is the source of truth for what shape actually came back.",
+      example: "ARRAY",
+    },
+  },
+} as const;
+
+export const EquityCurveResultSchema = {
+  type: "object",
+  description:
+    "An equity curve, shaped per `meta.outMode`: `points` when `ARRAY`, `timestamps` + `equities` (parallel arrays) when `SHORT`. Used identically wherever a curve is returned — a plain backtest's inline `equityCurve` and a sweep row's `equityCurve` are the same type. `url` is present *instead of* any points when the curve is served by pointer rather than inline (a sweep row's top-N winners only): `GET` it separately to fetch this exact same shape with the points populated.",
+  required: ["meta"],
+  properties: {
+    meta: {
+      $ref: "#/components/schemas/EquityCurveMeta",
+    },
+    points: {
+      type: "array",
+      description:
+        "Present when `meta.outMode` is `ARRAY` and the curve is inline (not a pointer).",
+      items: {
+        $ref: "#/components/schemas/EquityPoint",
+      },
+    },
+    timestamps: {
+      type: "array",
+      description:
+        "Present when `meta.outMode` is `SHORT` and the curve is inline (not a pointer).",
+      items: {
+        type: "integer",
+        format: "int64",
+      },
+    },
+    equities: {
+      type: "array",
+      description:
+        "Present when `meta.outMode` is `SHORT` and the curve is inline (not a pointer), parallel to `timestamps` (same index, same point).",
+      items: {
+        type: "number",
+        format: "double",
+      },
+    },
+    url: {
+      type: "string",
+      description:
+        "Present only for a sweep row's pointer curve. `GET` this to fetch the curve itself, in this exact `{points|timestamps+equities, meta}` shape — `meta` there is the real, possibly size-guarded outcome; this outer `meta` is a raw, untransformed preview from the moment the sweep selected this trial's curve, and the two can legitimately differ.",
+      example:
+        "/v1/backtest/binance/ticker/executeSweep/req-1/swp_test/runs/3/equityCurve",
+    },
+  },
+} as const;
+
 export const strategyIdSchema = {
   description: `Unique identifier for a compiled strategy, derived from the source itself: the same code
 always yields the same id, for every caller, whatever its formatting. See
@@ -1482,6 +1680,68 @@ always yields the same id, for every caller, whatever its formatting. See
 `,
   type: "string",
   example: "6bsh31ikwkuivhtgcoa6s4",
+} as const;
+
+export const DeclaredPropertySchema = {
+  type: "object",
+  description: `One property name \`POST /strategy\` could establish without constructing the strategy —
+either declared with \`@StrategyProperty\` on the compiled source, or one of the small set of
+base properties every strategy carries (\`amnt\`, \`enabled\`, \`multiEntry\`, ...).
+
+**Best-effort, not exhaustive.** A property registered through an attached risk/backtest
+config needs a live instance to discover and is not listed here. Use this to catch a typo'd
+sweep key before submitting, not as the definitive list of what a sweep will accept — a
+name absent from this list may still be valid.
+`,
+  required: ["name"],
+  properties: {
+    name: {
+      type: "string",
+      description:
+        "The key a sweep or execute param map uses for this property.",
+      example: "rsi.period",
+    },
+    description: {
+      type: "string",
+      description: "Human-readable label, as declared.",
+      example: "RSI period",
+    },
+    defaultValue: {
+      type: "string",
+      description: `The declared default, as a string, if one was given. Absent, not null, when none was
+declared.
+`,
+      example: "14",
+    },
+    reflected: {
+      type: "boolean",
+      description: `Whether a value for this key is injected into the strategy's field (\`true\`) or only
+available through the property map (\`false\`).
+`,
+      example: true,
+    },
+    min: {
+      type: "number",
+      format: "double",
+      description:
+        "Suggested sweep/range minimum, if declared. Advisory only, never validated.",
+      example: 2,
+    },
+    max: {
+      type: "number",
+      format: "double",
+      description:
+        "Suggested sweep/range maximum, if declared. Advisory only, never validated.",
+      example: 50,
+    },
+    step: {
+      type: "number",
+      format: "double",
+      description:
+        "Suggested sweep/range step, if declared. Advisory only, never validated.",
+      example: 1,
+    },
+  },
 } as const;
 
 export const NoticeSchema = {
@@ -1812,7 +2072,7 @@ header, no other API credentials.
 export const DatasetVersionSchema = {
   type: "object",
   description: `One successfully ingested upload. Cadence and timestamp unit are discovered from the file,
-not declared by the caller (D-11).
+not declared by the caller.
 `,
   required: ["datasetId"],
   properties: {

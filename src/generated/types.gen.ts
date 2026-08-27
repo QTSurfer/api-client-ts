@@ -434,6 +434,43 @@ export type ExecuteSweepRequest = {
    */
   minTradeFloor?: number;
   walkForward?: WalkForwardRequest;
+  equityCurve?: EquityCurveRequest;
+};
+
+/**
+ * Requested equity-curve transform, applied server-side in a fixed pipeline order: `resample` (point count) then `differential` (encoding) then `outMode` (JSON shape) — each stage assumes the previous one already ran. A server-side size guard can still force a smaller/deflated shape above its thresholds regardless of what is requested here — see `EquityCurveMeta` for what actually happened.
+ */
+export type EquityCurveOptions = {
+  /**
+   * Downsample to at most this many points (extrema-preserving — the global max/min and the exact first/last point are always kept). Omit for no downsampling.
+   */
+  resample?: number;
+  /**
+   * Delta-encode both fields from the second (post-resample) point onward.
+   */
+  differential?: boolean;
+  /**
+   * Requested JSON shape.
+   */
+  outMode?: EquityCurveOutMode;
+};
+
+/**
+ * Selection (`mode`/`n`/`maxPct`) plus the transform preference (`resample`/`differential`/`outMode`) applied by `GET .../equityCurve` whenever ITS OWN query params are absent, for a curve this sweep retained. The transform half never affects retention or `sweepId` — a caller can always override it per-request at read time regardless of what was submitted here.
+ */
+export type EquityCurveRequest = EquityCurveOptions & {
+  /**
+   * Which trials keep their per-point equity curve. `auto` retains curves only while the accumulated size stays within server limits; `topN`/`topPct` retain curves for the best-ranked trials explicitly; `none` retains no curves.
+   */
+  mode?: "auto" | "topN" | "topPct" | "none";
+  /**
+   * Trial count to retain when mode is topN.
+   */
+  n?: number;
+  /**
+   * Top percentage of trials to retain when mode is topPct.
+   */
+  maxPct?: number;
 };
 
 /**
@@ -551,6 +588,10 @@ export type SweepRunRow = {
   belowTradeFloor: boolean;
   aborted: boolean;
   runtimeMs: number;
+  /**
+   * Present only when this trial's curve was selected (`equityCurve.mode` was `topN`/`topPct` on the request, and this row ranked among the winners) — absent, not null, otherwise; a run that was never spilled and one that was spilled but not selected look identical here. Always a pointer today (`url` present, no inline points): a sweep's curves live in a spill store, not the response, until fetched separately. `GET` the `url` to fetch the curve itself; its own `meta` there is the real, possibly size-guarded outcome, while this outer `meta` is a raw, untransformed preview from selection time and can differ.
+   */
+  equityCurve?: EquityCurveResult;
 };
 
 /**
@@ -616,6 +657,9 @@ export type SweepHeatmapCell = {
 
 export type ExecuteSweepResult = {
   sweepId: string;
+  /**
+   * The sweep's own status vocabulary — not the same set `state.status` below uses. See `state` for why.
+   */
   status: "RUNNING" | "COMPLETED" | "PARTIAL" | "CANCELLED";
   objective: "sharpe" | "sortino" | "pnl" | "maxdd";
   order: "ranked" | "natural";
@@ -647,6 +691,13 @@ export type ExecuteSweepResult = {
   truncated: boolean;
   leaderboard: Array<SweepRunRow>;
   walkForward?: WalkForwardResult;
+  /**
+   * The same `JobState` shape a single-execute `BacktestJobResult` carries — not a sweep-specific lookalike, the actual type, so field names and timestamp formatting match exactly.
+   * `state.status` uses `JobState`'s own vocabulary (`New`/`Started`/`Completed`/ `Aborted`/`Failed`), mapped from the sweep's `status` field above rather than copying it: `PARTIAL` and `CANCELLED` both map to `Aborted`, because a sweep's `PARTIAL` is already terminal (some shards finished, some failed, nothing more is coming) unlike a single job's non-terminal `Partial`, which has no equivalent here at all.
+   * `state.completed` is real ticks processed on a plain sweep. On a `walkForward` sweep it is currently always `0` — the walk-forward fold runner was not wired to count ticks when this shipped, unlike the plain shard path.
+   * `state.size` is always `0` on every path (single execute, plain sweep, walk-forward alike) — nothing populates it anywhere yet. That is a known gap across the whole API, not a sweep-specific omission.
+   */
+  state: JobState;
 };
 
 /**
@@ -812,9 +863,9 @@ export type ResultMap = {
    */
   maxDrawdownPercent?: number;
   /**
-   * Equity curve over the backtest. Element 0 is an anchor at the backtest `from` with `initialCapital`; the remaining points are one sample per emitted yield, in order. Use it to plot the strategy's running equity without re-deriving it from the yield history.
+   * Equity curve over the backtest. `points[0]` (or `timestamps[0]`/`equities[0]` in `SHORT` mode) is an anchor at the backtest `from` with `initialCapital`; the remaining points are one sample per emitted yield, in order. Use it to plot the strategy's running equity without re-deriving it from the yield history. Always inline for a plain backtest today — never a pointer (`url`); that shape exists only for a sweep row's top-N winners.
    */
-  equityCurve?: Array<EquityPoint>;
+  equityCurve?: EquityCurveResult;
   /**
    * Number of signals emitted during strategy execution
    */
@@ -856,12 +907,112 @@ export type EquityPoint = {
 };
 
 /**
+ * JSON shape for an equity curve's points. `ARRAY` is `[{timestamp, equity}, ...]`; `SHORT` is `{timestamps: [...], equities: [...]}` (parallel arrays, no repeated key text). The one schema shared by every place `outMode` appears, request or response, so the two cannot drift to different value sets.
+ */
+export type EquityCurveOutMode = "ARRAY" | "SHORT";
+
+/**
+ * What the transform pipeline actually did, computed from the observed outcome — never a copy of what was requested. Lets a caller detect a forced or no-op transform (e.g. a `resample` ceiling already above the curve's size is a legal no-op, reported honestly as `resampled: false`).
+ */
+export type EquityCurveMeta = {
+  /**
+   * Size of the curve the transform pipeline received.
+   */
+  inputPointCount: number;
+  /**
+   * Size after the full pipeline (resample, then differential, then outMode).
+   */
+  outputPointCount: number;
+  /**
+   * True only if the resample stage actually changed the point count.
+   */
+  resampled: boolean;
+  /**
+   * True only if delta-encoding actually ran. Requesting it on a curve of 0 or 1 points has nothing to encode, so it does not run even if asked.
+   */
+  differential: boolean;
+  /**
+   * The actual JSON shape served. Present even when the points themselves are not (a pointer curve, `EquityCurveResult.url`) — a caller resolving that URL separately still needs to know how to parse what it gets back before fetching it. May override an explicit request above a server-side size threshold; this field, not the request, is the source of truth for what shape actually came back.
+   */
+  outMode: EquityCurveOutMode;
+};
+
+/**
+ * An equity curve, shaped per `meta.outMode`: `points` when `ARRAY`, `timestamps` + `equities` (parallel arrays) when `SHORT`. Used identically wherever a curve is returned — a plain backtest's inline `equityCurve` and a sweep row's `equityCurve` are the same type. `url` is present *instead of* any points when the curve is served by pointer rather than inline (a sweep row's top-N winners only): `GET` it separately to fetch this exact same shape with the points populated.
+ */
+export type EquityCurveResult = {
+  meta: EquityCurveMeta;
+  /**
+   * Present when `meta.outMode` is `ARRAY` and the curve is inline (not a pointer).
+   */
+  points?: Array<EquityPoint>;
+  /**
+   * Present when `meta.outMode` is `SHORT` and the curve is inline (not a pointer).
+   */
+  timestamps?: Array<number>;
+  /**
+   * Present when `meta.outMode` is `SHORT` and the curve is inline (not a pointer), parallel to `timestamps` (same index, same point).
+   */
+  equities?: Array<number>;
+  /**
+   * Present only for a sweep row's pointer curve. `GET` this to fetch the curve itself, in this exact `{points|timestamps+equities, meta}` shape — `meta` there is the real, possibly size-guarded outcome; this outer `meta` is a raw, untransformed preview from the moment the sweep selected this trial's curve, and the two can legitimately differ.
+   */
+  url?: string;
+};
+
+/**
  * Unique identifier for a compiled strategy, derived from the source itself: the same code
  * always yields the same id, for every caller, whatever its formatting. See
  * `POST /strategy` for exactly which rewrites preserve it and which do not.
  *
  */
 export type StrategyId = string;
+
+/**
+ * One property name `POST /strategy` could establish without constructing the strategy —
+ * either declared with `@StrategyProperty` on the compiled source, or one of the small set of
+ * base properties every strategy carries (`amnt`, `enabled`, `multiEntry`, ...).
+ *
+ * **Best-effort, not exhaustive.** A property registered through an attached risk/backtest
+ * config needs a live instance to discover and is not listed here. Use this to catch a typo'd
+ * sweep key before submitting, not as the definitive list of what a sweep will accept — a
+ * name absent from this list may still be valid.
+ *
+ */
+export type DeclaredProperty = {
+  /**
+   * The key a sweep or execute param map uses for this property.
+   */
+  name: string;
+  /**
+   * Human-readable label, as declared.
+   */
+  description?: string;
+  /**
+   * The declared default, as a string, if one was given. Absent, not null, when none was
+   * declared.
+   *
+   */
+  defaultValue?: string;
+  /**
+   * Whether a value for this key is injected into the strategy's field (`true`) or only
+   * available through the property map (`false`).
+   *
+   */
+  reflected?: boolean;
+  /**
+   * Suggested sweep/range minimum, if declared. Advisory only, never validated.
+   */
+  min?: number;
+  /**
+   * Suggested sweep/range maximum, if declared. Advisory only, never validated.
+   */
+  max?: number;
+  /**
+   * Suggested sweep/range step, if declared. Advisory only, never validated.
+   */
+  step?: number;
+};
 
 /**
  * A diagnostic the engine raised while the strategy ran. Advisory: it describes something worth
@@ -1080,7 +1231,7 @@ export type DatasetCreated = Dataset & {
 
 /**
  * One successfully ingested upload. Cadence and timestamp unit are discovered from the file,
- * not declared by the caller (D-11).
+ * not declared by the caller.
  *
  */
 export type DatasetVersion = {
@@ -1478,6 +1629,12 @@ export type CompileStrategyResponses = {
    */
   200: {
     strategyId: StrategyId;
+    /**
+     * What could be established about this strategy's sweep-key vocabulary without
+     * constructing it. See `DeclaredProperty` — best-effort, not exhaustive.
+     *
+     */
+    declaredProperties?: Array<DeclaredProperty>;
   };
 };
 
@@ -1891,6 +2048,55 @@ export type GetSweepSensitivityResponses = {
 export type GetSweepSensitivityResponse =
   GetSweepSensitivityResponses[keyof GetSweepSensitivityResponses];
 
+export type GetSweepRunEquityCurveData = {
+  body?: never;
+  path: {
+    exchangeId: string;
+    type: DataSourceType;
+    requestId: string;
+    sweepId: string;
+    /**
+     * The trial's `runIx`, as it appears on its leaderboard row.
+     */
+    runIx: number;
+  };
+  query?: {
+    /**
+     * Requested JSON shape. Omit to use the sweep's submitted default; may be overridden either way by the server's size guard.
+     */
+    outMode?: EquityCurveOutMode;
+    /**
+     * Downsample to at most this many points (extrema-preserving — the global max/min and the exact first/last point are always kept). Omit to use the sweep's submitted default (itself omittable, for no downsampling).
+     */
+    resample?: number;
+    /**
+     * Delta-encode both fields from the second point onward. Omit to use the sweep's submitted default.
+     */
+    differential?: boolean;
+  };
+  url: "/backtest/{exchangeId}/{type}/executeSweep/{requestId}/{sweepId}/runs/{runIx}/equityCurve";
+};
+
+export type GetSweepRunEquityCurveErrors = {
+  /**
+   * Sweep or `runIx` not found, or that trial's curve was never selected — indistinguishable from a caller's perspective.
+   */
+  404: ResponseError;
+};
+
+export type GetSweepRunEquityCurveError =
+  GetSweepRunEquityCurveErrors[keyof GetSweepRunEquityCurveErrors];
+
+export type GetSweepRunEquityCurveResponses = {
+  /**
+   * The trial's equity curve, shaped per the resolved options.
+   */
+  200: EquityCurveResult;
+};
+
+export type GetSweepRunEquityCurveResponse =
+  GetSweepRunEquityCurveResponses[keyof GetSweepRunEquityCurveResponses];
+
 export type ExecuteBacktestData = {
   /**
    * Execute task parameters
@@ -1907,6 +2113,7 @@ export type ExecuteBacktestData = {
      *
      */
     storeSignals?: boolean;
+    equityCurve?: EquityCurveOptions;
   };
   path: {
     /**
