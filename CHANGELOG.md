@@ -1,5 +1,11 @@
 # @qtsurfer/api-client
 
+## 0.13.0
+
+### Minor Changes
+
+- [`5c6c015`](https://github.com/QTSurfer/api-client-ts/commit/5c6c015a83354a633c502c833094e02a28231cd2) Thanks [@mrmx](https://github.com/mrmx)! - Regenerate for OpenAPI 0.111.2 with renewable dataset upload sessions.
+
 ## 0.12.0
 
 ### Minor Changes
