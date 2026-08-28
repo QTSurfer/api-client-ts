@@ -1205,29 +1205,59 @@ export type DatasetWithLinks = Dataset & {
 };
 
 /**
- * A `Dataset` plus the first upload session — the presigned URL to PUT the file to.
+ * A presigned destination for uploading a raw dataset file directly to storage.
+ */
+export type DatasetUploadTarget = {
+  /**
+   * Presigned URL. `PUT` the raw CSV file here directly — no `Authorization` header,
+   * no other API credentials.
+   *
+   */
+  url: string;
+  /**
+   * How long `url` stays valid.
+   */
+  expiresInMinutes: number;
+};
+
+/**
+ * An upload session — an id plus the presigned URL to PUT the raw file to. Returned both by
+ * `POST /datasets` (as part of the new dataset) and by `POST /datasets/{datasetId}/uploads`
+ * (on its own, for an existing one).
  *
  */
-export type DatasetCreated = Dataset & {
+export type DatasetUploadSession = {
   /**
    * Identifies this upload session. Pass to
    * `POST /datasets/{datasetId}/uploads/{uploadId}/finalize` once the PUT completes.
    *
    */
   uploadId: string;
-  upload: {
-    /**
-     * Presigned URL. `PUT` the raw CSV file here directly — no `Authorization`
-     * header, no other API credentials.
-     *
-     */
-    url: string;
-    /**
-     * How long `url` stays valid.
-     */
-    expiresInMinutes: number;
-  };
+  upload: DatasetUploadTarget;
 };
+
+/**
+ * The metadata available immediately after creating a dataset, plus its first upload
+ * session — the presigned URL to PUT the file to. Version-derived fields such as
+ * `createdAt`, `currentVersionId`, range, and cadence are available from `GET /datasets/{datasetId}`
+ * after the relevant lifecycle stages, not in this creation response.
+ *
+ */
+export type DatasetCreated = {
+  /**
+   * Opaque id of the newly created dataset.
+   */
+  datasetId: string;
+  /**
+   * Unique name of the newly created dataset.
+   */
+  name: string;
+  /**
+   * Always `ticker` in v1.
+   */
+  type: "ticker";
+  instrument: Instrument;
+} & DatasetUploadSession;
 
 /**
  * One successfully ingested upload. Cadence and timestamp unit are discovered from the file,
@@ -2381,6 +2411,38 @@ export type GetDatasetResponses = {
 
 export type GetDatasetResponse = GetDatasetResponses[keyof GetDatasetResponses];
 
+export type OpenDatasetUploadData = {
+  body?: never;
+  path: {
+    /**
+     * The id returned by `POST /datasets`
+     */
+    datasetId: string;
+  };
+  query?: never;
+  url: "/datasets/{datasetId}/uploads";
+};
+
+export type OpenDatasetUploadErrors = {
+  /**
+   * No such dataset for this user
+   */
+  404: ResponseError;
+};
+
+export type OpenDatasetUploadError =
+  OpenDatasetUploadErrors[keyof OpenDatasetUploadErrors];
+
+export type OpenDatasetUploadResponses = {
+  /**
+   * An upload session — new, or the one already open for this dataset
+   */
+  201: DatasetUploadSession;
+};
+
+export type OpenDatasetUploadResponse =
+  OpenDatasetUploadResponses[keyof OpenDatasetUploadResponses];
+
 export type FinalizeDatasetUploadData = {
   body?: never;
   path: {
@@ -2399,11 +2461,18 @@ export type FinalizeDatasetUploadData = {
 
 export type FinalizeDatasetUploadErrors = {
   /**
-   * No such dataset for this user, or nothing was PUT to `upload.url` yet — a finalize with
-   * nothing to finalize.
+   * No such dataset for this user; `uploadId` was not issued for this dataset (never
+   * minted, or minted for a different one); or nothing was PUT to `upload.url` yet — a
+   * finalize with nothing to finalize.
    *
    */
   404: ResponseError;
+  /**
+   * `uploadId` already produced a version. The error message names it. Open a new upload
+   * session (`POST /datasets/{datasetId}/uploads`) for anything new.
+   *
+   */
+  409: ResponseError;
   /**
    * The uploaded file exceeds your tier's size limit for a dataset.
    */

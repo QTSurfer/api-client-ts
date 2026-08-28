@@ -2027,44 +2027,83 @@ export const DatasetWithLinksSchema = {
   ],
 } as const;
 
+export const DatasetUploadTargetSchema = {
+  description:
+    "A presigned destination for uploading a raw dataset file directly to storage.",
+  type: "object",
+  required: ["url", "expiresInMinutes"],
+  properties: {
+    url: {
+      type: "string",
+      description: `Presigned URL. \`PUT\` the raw CSV file here directly — no \`Authorization\` header,
+no other API credentials.
+`,
+      example:
+        "https://storage.qtsurfer.com/uploads/00000000-.../up_1a2b3c4d5e6f7a8b/raw.csv?X-Amz-...",
+    },
+    expiresInMinutes: {
+      type: "integer",
+      description: "How long `url` stays valid.",
+      example: 15,
+    },
+  },
+} as const;
+
+export const DatasetUploadSessionSchema = {
+  description: `An upload session — an id plus the presigned URL to PUT the raw file to. Returned both by
+\`POST /datasets\` (as part of the new dataset) and by \`POST /datasets/{datasetId}/uploads\`
+(on its own, for an existing one).
+`,
+  type: "object",
+  required: ["uploadId", "upload"],
+  properties: {
+    uploadId: {
+      type: "string",
+      description: `Identifies this upload session. Pass to
+\`POST /datasets/{datasetId}/uploads/{uploadId}/finalize\` once the PUT completes.
+`,
+      example: "up_1a2b3c4d5e6f7a8b",
+    },
+    upload: {
+      $ref: "#/components/schemas/DatasetUploadTarget",
+    },
+  },
+} as const;
+
 export const DatasetCreatedSchema = {
-  description: `A \`Dataset\` plus the first upload session — the presigned URL to PUT the file to.
+  description: `The metadata available immediately after creating a dataset, plus its first upload
+session — the presigned URL to PUT the file to. Version-derived fields such as
+\`createdAt\`, \`currentVersionId\`, range, and cadence are available from \`GET /datasets/{datasetId}\`
+after the relevant lifecycle stages, not in this creation response.
 `,
   allOf: [
     {
-      $ref: "#/components/schemas/Dataset",
-    },
-    {
       type: "object",
-      required: ["uploadId", "upload"],
+      required: ["datasetId", "name", "type", "instrument"],
       properties: {
-        uploadId: {
+        datasetId: {
           type: "string",
-          description: `Identifies this upload session. Pass to
-\`POST /datasets/{datasetId}/uploads/{uploadId}/finalize\` once the PUT completes.
-`,
-          example: "up_1a2b3c4d5e6f7a8b",
+          description: "Opaque id of the newly created dataset.",
+          example: "ds_3f9a1c2e7b0d4a5f",
         },
-        upload: {
-          type: "object",
-          required: ["url", "expiresInMinutes"],
-          properties: {
-            url: {
-              type: "string",
-              description: `Presigned URL. \`PUT\` the raw CSV file here directly — no \`Authorization\`
-header, no other API credentials.
-`,
-              example:
-                "https://storage.qtsurfer.com/00000000-.../uploads/up_1a2b3c4d5e6f7a8b/raw.csv?X-Amz-...",
-            },
-            expiresInMinutes: {
-              type: "integer",
-              description: "How long `url` stays valid.",
-              example: 15,
-            },
-          },
+        name: {
+          type: "string",
+          description: "Unique name of the newly created dataset.",
+          example: "My BTC ticks",
+        },
+        type: {
+          type: "string",
+          enum: ["ticker"],
+          description: "Always `ticker` in v1.",
+          example: "ticker",
+        },
+        instrument: {
+          $ref: "#/components/schemas/Instrument",
         },
       },
+    },
+    {
+      $ref: "#/components/schemas/DatasetUploadSession",
     },
   ],
 } as const;

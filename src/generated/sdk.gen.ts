@@ -81,6 +81,9 @@ import type {
   GetDatasetData,
   GetDatasetResponse,
   GetDatasetError,
+  OpenDatasetUploadData,
+  OpenDatasetUploadResponse,
+  OpenDatasetUploadError,
   FinalizeDatasetUploadData,
   FinalizeDatasetUploadResponse,
   FinalizeDatasetUploadError,
@@ -859,6 +862,10 @@ export const listDatasets = <ThrowOnError extends boolean = false>(
  * `POST /datasets/{datasetId}/uploads/{uploadId}/finalize` once the upload completes to kick
  * off ingest.
  *
+ * Losing this response loses nothing: calling this dataset's
+ * `POST /datasets/{datasetId}/uploads` returns the very same upload session again rather than
+ * opening a new one, as long as nothing has been finalized against it yet.
+ *
  * v1 is ticker data only — `type` is not a request field, it is always `"ticker"` in the
  * response. `instrument` must be a plain spot pair (`BASE/QUOTE`, exactly one `/`); derivative
  * forms (e.g. `BTC/USDT:USDT`) are rejected.
@@ -943,13 +950,47 @@ export const getDataset = <ThrowOnError extends boolean = false>(
 };
 
 /**
+ * Open a new upload session for an existing dataset
+ * Get a fresh presigned URL to upload a new version into a dataset you already have — a
+ * corrected file, or the next chunk of history. Behaves the same way `POST /datasets` does
+ * for a brand-new dataset's own upload: at most one upload session is open per dataset at a
+ * time, so calling this again before finalizing just hands back that same session rather
+ * than opening a second one — safe to call repeatedly if a response gets lost.
+ *
+ * Once a session has been finalized (successfully or not), the next call here opens a
+ * genuinely new one for that dataset's next version.
+ *
+ */
+export const openDatasetUpload = <ThrowOnError extends boolean = false>(
+  options: Options<OpenDatasetUploadData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).post<
+    OpenDatasetUploadResponse,
+    OpenDatasetUploadError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/datasets/{datasetId}/uploads",
+    ...options,
+  });
+};
+
+/**
  * Finalize an uploaded file and start ingest
- * Call once the file has been PUT to the `upload.url` from `POST /datasets`. Enqueues ingest
- * and returns immediately; poll
+ * Call once the file has been PUT to the `upload.url` from `POST /datasets` (or from
+ * `POST /datasets/{datasetId}/uploads`). Enqueues ingest and returns immediately; poll
  * `GET /datasets/{datasetId}/uploads/{uploadId}` for the result.
  *
- * Idempotent — a repeat finalize of the same upload returns the same `jobId` rather than
- * enqueueing a second ingest.
+ * Idempotent while the upload is still open — a repeat finalize before it has produced a
+ * version returns the same `jobId` rather than enqueueing a second ingest. Once it HAS
+ * produced a version, `uploadId` is spent: finalizing it again is a `409`, even with
+ * different bytes freshly PUT to the same URL — open a new upload session instead
+ * (`POST /datasets/{datasetId}/uploads`) rather than reusing a spent one.
  *
  */
 export const finalizeDatasetUpload = <ThrowOnError extends boolean = false>(
