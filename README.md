@@ -69,7 +69,7 @@ pluggable token stores so callers don't reinvent that plumbing.
 All operations are exported as standalone functions; every operation accepts an `Options` object and returns `{ data, error, response }`.
 
 The table is exhaustive: `src/generated/` is produced from the OpenAPI spec, so **all 29 operations**
-the spec declares are exported. The rows below describe **spec version 0.111.2**, which is versioned
+the spec declares are exported. The rows below describe **spec version 0.112.0**, which is versioned
 independently of this package.
 
 | Function | Method | Path | Purpose |

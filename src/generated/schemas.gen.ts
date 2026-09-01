@@ -361,8 +361,10 @@ export const JobStateSchema = {
   properties: {
     contextId: {
       type: "string",
-      description: "Opaque context identifier for the job",
-      example: "ctx_2o8heaioicr0edvx5ybcap",
+      description:
+        "Identifier for the job's execution context. Its current shape is a colon-delimited string encoding the data source type, an internal user id, the exchange, the job id, and the instrument — but that structure is not a committed contract and may change without notice. Treat it as an opaque token: store and pass it back, don't parse it.",
+      example:
+        "jctx:ticker:76b90203-03c2-46f6-b366-9944f167e818:binance:5ikyamio8b3v9wcnfxztzg:btc/usdt:0vicnz3thzhrqvfczks1pu",
     },
     status: {
       type: "string",
@@ -989,14 +991,20 @@ export const SweepRunRowSchema = {
     pnlPct: {
       type: "number",
       format: "double",
+      description:
+        "Same units as `pnlTotalPercent` on the single-run result — percent (0-100 scale).",
     },
     cagr: {
       type: "number",
       format: "double",
+      description:
+        "Same units as `cagr` on the single-run result — a ratio, not a percent.",
     },
     maxDdPct: {
       type: "number",
       format: "double",
+      description:
+        "Same units as `maxDrawdownPercent` on the single-run result — percent (0-100 scale).",
     },
     trades: {
       type: "integer",
@@ -1005,6 +1013,8 @@ export const SweepRunRowSchema = {
     winRate: {
       type: "number",
       format: "double",
+      description:
+        "Same units as `winRate` on the single-run result — a fraction, 0.0-1.0 (a rate, not a percent).",
     },
     belowTradeFloor: {
       type: "boolean",
@@ -1340,7 +1350,8 @@ same input parameters — repeated calls with identical params return the same i
   properties: {
     jobId: {
       type: "string",
-      description: "Unique job identifier; use this to poll for completion.",
+      description:
+        "Unique job identifier; use this to poll for completion. For a sweep, pass this same value as the `requestId` path parameter to `executeSweep` — same identifier, different name at that call site.",
       example: "13RBLGQlPnfDjO6wyKSX8i",
     },
   },
@@ -1443,8 +1454,9 @@ reading: a run that produced no trades often did so for a reason stated here.
     winRate: {
       type: "number",
       format: "double",
-      description: "Percentage of profitable trades (0-100)",
-      example: 58.33,
+      description:
+        "Fraction of profitable trades, 0.0-1.0 (a rate, not a percent — multiply by 100 to display as one). Zero when `totalTrades` is 0.",
+      example: 0.5833,
     },
     sharpeRatio: {
       type: "number",
@@ -1463,7 +1475,7 @@ reading: a run that produced no trades often did so for a reason stated here.
     cagr: {
       type: "number",
       format: "double",
-      description: "Compound Annual Growth Rate",
+      description: "Compound Annual Growth Rate (eg. 0.15 for 15%)",
       example: 0.1534,
     },
     maxDrawdown: {
@@ -1508,6 +1520,28 @@ reading: a run that produced no trades often did so for a reason stated here.
           differential: false,
           outMode: "ARRAY",
         },
+      },
+    },
+    params: {
+      type: "object",
+      additionalProperties: {
+        oneOf: [
+          {
+            type: "number",
+          },
+          {
+            type: "string",
+          },
+          {
+            type: "boolean",
+          },
+        ],
+      },
+      description:
+        "The strategy properties this run was given, echoed back as sent. Absent when the request carried none, so its presence is what distinguishes a parameterised run from one at the declared defaults — a stored result cannot otherwise say which vector produced it, and this endpoint is meant to be called repeatedly over one prepare.",
+      example: {
+        "ema.fast.period": 9,
+        "ema.slow.period": 21,
       },
     },
     signalCount: {

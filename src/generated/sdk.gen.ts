@@ -743,9 +743,21 @@ export const getSweepRunEquityCurve = <ThrowOnError extends boolean = false>(
  * Returns immediately with a `jobId`; poll `GET /backtest/{exchangeId}/{type}/execute/{jobId}`
  * for the result.
  *
- * The same params (same `prepareJobId`, `strategyId`, `storeSignals`, `equityCurve`) always
- * return the same `jobId` (idempotent) — a request that omits `equityCurve` dedupes exactly
- * as it did before that field existed.
+ * Optionally takes `params`: strategy properties for this one run, applied without
+ * recompiling. This is how a sweep leaderboard winner gets re-run for its `equityCurve` —
+ * a sweep row carries the ten ranking metrics but never a curve, whatever its size. Compile
+ * once, call this endpoint N times with different `params`, and each response is an ordinary
+ * backtest result with the curve included.
+ *
+ * The same request (same `prepareJobId`, `strategyId`, `storeSignals`, `equityCurve`,
+ * `params`) always returns the same `jobId` (idempotent) — a request that omits `equityCurve`
+ * or `params` dedupes exactly as it did before those fields existed. Two different `params`
+ * vectors over one prepare are two different jobs, and `9` and `9.0` are the same one.
+ *
+ * The re-run is an independent execution rather than a replay of the sweep trial — the two
+ * paths do not share a simulator — but they are pinned to agree: one vector run both ways
+ * matches on every leaderboard metric, asserted as a regression test. Treat a difference as a
+ * bug worth reporting, not as expected behaviour.
  *
  * Works unchanged for a dataset-backed prepare (`exchangeId: user`) — the request body is
  * identical either way, since the instrument and range are recovered from `prepareJobId`.

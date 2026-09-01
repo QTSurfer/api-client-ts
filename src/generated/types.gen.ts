@@ -253,7 +253,7 @@ export type PrepareRequest = {
  */
 export type JobState = {
   /**
-   * Opaque context identifier for the job
+   * Identifier for the job's execution context. Its current shape is a colon-delimited string encoding the data source type, an internal user id, the exchange, the job id, and the instrument — but that structure is not a committed contract and may change without notice. Treat it as an opaque token: store and pass it back, don't parse it.
    */
   contextId: string;
   /**
@@ -580,10 +580,22 @@ export type SweepRunRow = {
    * Absolute net PnL in the output currency.
    */
   pnl: number;
+  /**
+   * Same units as `pnlTotalPercent` on the single-run result — percent (0-100 scale).
+   */
   pnlPct: number;
+  /**
+   * Same units as `cagr` on the single-run result — a ratio, not a percent.
+   */
   cagr: number;
+  /**
+   * Same units as `maxDrawdownPercent` on the single-run result — percent (0-100 scale).
+   */
   maxDdPct: number;
   trades: number;
+  /**
+   * Same units as `winRate` on the single-run result — a fraction, 0.0-1.0 (a rate, not a percent).
+   */
   winRate: number;
   belowTradeFloor: boolean;
   aborted: boolean;
@@ -770,7 +782,7 @@ export type WalkForwardFold = {
  */
 export type AcceptedJob = {
   /**
-   * Unique job identifier; use this to poll for completion.
+   * Unique job identifier; use this to poll for completion. For a sweep, pass this same value as the `requestId` path parameter to `executeSweep` — same identifier, different name at that call site.
    */
   jobId: string;
 };
@@ -839,7 +851,7 @@ export type ResultMap = {
    */
   totalTrades?: number;
   /**
-   * Percentage of profitable trades (0-100)
+   * Fraction of profitable trades, 0.0-1.0 (a rate, not a percent — multiply by 100 to display as one). Zero when `totalTrades` is 0.
    */
   winRate?: number;
   /**
@@ -851,7 +863,7 @@ export type ResultMap = {
    */
   sortinoRatio?: number;
   /**
-   * Compound Annual Growth Rate
+   * Compound Annual Growth Rate (eg. 0.15 for 15%)
    */
   cagr?: number;
   /**
@@ -866,6 +878,12 @@ export type ResultMap = {
    * Equity curve over the backtest. `points[0]` (or `timestamps[0]`/`equities[0]` in `SHORT` mode) is an anchor at the backtest `from` with `initialCapital`; the remaining points are one sample per emitted yield, in order. Use it to plot the strategy's running equity without re-deriving it from the yield history. Always inline for a plain backtest today — never a pointer (`url`); that shape exists only for a sweep row's top-N winners.
    */
   equityCurve?: EquityCurveResult;
+  /**
+   * The strategy properties this run was given, echoed back as sent. Absent when the request carried none, so its presence is what distinguishes a parameterised run from one at the declared defaults — a stored result cannot otherwise say which vector produced it, and this endpoint is meant to be called repeatedly over one prepare.
+   */
+  params?: {
+    [key: string]: number | string | boolean;
+  };
   /**
    * Number of signals emitted during strategy execution
    */
@@ -1970,6 +1988,9 @@ export type CancelSweepData = {
   path: {
     exchangeId: string;
     type: DataSourceType;
+    /**
+     * The `jobId` returned by `POST /backtest/{exchangeId}/{type}/prepare`.
+     */
     requestId: string;
     sweepId: string;
   };
@@ -2004,6 +2025,9 @@ export type GetSweepResultData = {
   path: {
     exchangeId: string;
     type: DataSourceType;
+    /**
+     * The `jobId` returned by `POST /backtest/{exchangeId}/{type}/prepare`.
+     */
     requestId: string;
     sweepId: string;
   };
@@ -2046,6 +2070,9 @@ export type GetSweepSensitivityData = {
   path: {
     exchangeId: string;
     type: DataSourceType;
+    /**
+     * The `jobId` returned by `POST /backtest/{exchangeId}/{type}/prepare`.
+     */
     requestId: string;
     sweepId: string;
   };
@@ -2083,6 +2110,9 @@ export type GetSweepRunEquityCurveData = {
   path: {
     exchangeId: string;
     type: DataSourceType;
+    /**
+     * The `jobId` returned by `POST /backtest/{exchangeId}/{type}/prepare`.
+     */
     requestId: string;
     sweepId: string;
     /**
@@ -2144,6 +2174,28 @@ export type ExecuteBacktestData = {
      */
     storeSignals?: boolean;
     equityCurve?: EquityCurveOptions;
+    /**
+     * Strategy properties to apply to this run. Omit to run the strategy's declared
+     * defaults, which is exactly what a request without this field has always done.
+     *
+     * Each key is the `name` declared on the strategy's `@StrategyProperty`, which
+     * need NOT match the Java field it annotates — `GET`/`POST /strategy` returns
+     * `declaredProperties` for precisely this. A key naming no declared property is
+     * rejected: the job fails with the list of names the strategy does declare,
+     * rather than completing at the defaults and handing back a plausible result for
+     * parameters nobody chose.
+     *
+     * Scalars only — number, string or boolean. Ranges and lists belong to
+     * `executeSweep`; one request here is one run. `null` is not a value: leave the
+     * key out to keep a property at its default. Keys are made of letters, digits,
+     * `_`, `-` and dots, and may not be `strategyId`, `storeSignals`, `equityCurve`,
+     * `backtestEnabled` or `backtestFakeExecution` — those configure the job rather
+     * than the strategy.
+     *
+     */
+    params?: {
+      [key: string]: number | string | boolean;
+    };
   };
   path: {
     /**

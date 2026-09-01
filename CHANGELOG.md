@@ -1,5 +1,12 @@
 # @qtsurfer/api-client
 
+## 0.14.0
+
+### Minor Changes
+
+- Regenerate for OpenAPI 0.112.0. `executeBacktest` now accepts scalar strategy-property overrides
+  through `params` and returns the submitted values in `BacktestJobResult.results.params`.
+
 ## 0.13.0
 
 ### Minor Changes
