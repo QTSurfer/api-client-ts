@@ -15,6 +15,11 @@ export type ResponseError = {
 };
 
 /**
+ * A scalar strategy property value for one execution.
+ */
+export type ScalarStrategyParamValue = number | string | boolean;
+
+/**
  * Exchange instrument identifier (e.g. a currency pair)
  */
 export type Instrument = string;
@@ -568,7 +573,7 @@ export type SweepRunRow = {
    */
   neighbourCount?: number;
   /**
-   * Probability that this run's Sharpe reflects real edge rather than the best draw from however many parameter vectors were tried. Above ~0.95 the result survives the multiple-testing correction; near 0.5 or below it is indistinguishable from the best of a pile of coin flips. Absent on aborted runs, and on sweeps with too few trials to establish any dispersion to deflate against.
+   * Probability that this run's Sharpe reflects real edge rather than the best draw from however many parameter vectors were tried. Above ~0.95 the result survives the multiple-testing correction; near 0.5 or below it is indistinguishable from the best of a pile of coin flips. Absent on aborted runs, on sweeps with too few trials to establish any dispersion to deflate against, on runs with fewer than 3 period returns, and on a degenerate (near-constant) return series — all cases where the underlying statistic isn't meaningfully computable, rather than genuinely zero. A present value is the computed probability, however small.
    */
   deflatedSharpe?: number;
   params: {
@@ -601,7 +606,10 @@ export type SweepRunRow = {
   aborted: boolean;
   runtimeMs: number;
   /**
-   * Present only when this trial's curve was selected (`equityCurve.mode` was `topN`/`topPct` on the request, and this row ranked among the winners) — absent, not null, otherwise; a run that was never spilled and one that was spilled but not selected look identical here. Always a pointer today (`url` present, no inline points): a sweep's curves live in a spill store, not the response, until fetched separately. `GET` the `url` to fetch the curve itself; its own `meta` there is the real, possibly size-guarded outcome, while this outer `meta` is a raw, untransformed preview from selection time and can differ.
+   * Present whenever this trial actually has a curve — which is any completed run of a sweep that requested curves at all (`equityCurve.mode` `topN`/`topPct`), not only the ranked winners. Absent, not null, when there is genuinely nothing: the run aborted, it made no trades, or the sweep never retained curves (`mode` `auto`/`none`).
+   * Selection decides how the curve travels, not whether it exists. A row may carry `url` alone, or `url` together with the points inline.
+   * **Read `points`/`equities` to tell whether the curve is inline — never the presence of this object, and never the absence of `url`.** Both mislead, and in opposite directions: this object is present on rows that carry only a pointer, and `url` stays present alongside an inline curve so a caller can still re-request a different transform. An inline curve is emitted on the materialisation view (`?order=natural`), where each row is read once; the ranked view keeps the pointer, being polled.
+   * When only a pointer is present, `GET` the `url` for the curve. Its own `meta` there is the real, possibly size-guarded outcome. This outer `meta` may be a declaration rather than a measurement — for a row whose curve was not promoted, the point count is derived from the trade count (one equity point per closed trade) instead of being read from the store, to keep a polled response from doing per-row work.
    */
   equityCurve?: EquityCurveResult;
 };
@@ -707,7 +715,8 @@ export type ExecuteSweepResult = {
    * The same `JobState` shape a single-execute `BacktestJobResult` carries — not a sweep-specific lookalike, the actual type, so field names and timestamp formatting match exactly.
    * `state.status` uses `JobState`'s own vocabulary (`New`/`Started`/`Completed`/ `Aborted`/`Failed`), mapped from the sweep's `status` field above rather than copying it: `PARTIAL` and `CANCELLED` both map to `Aborted`, because a sweep's `PARTIAL` is already terminal (some shards finished, some failed, nothing more is coming) unlike a single job's non-terminal `Partial`, which has no equivalent here at all.
    * `state.completed` is real ticks processed on a plain sweep. On a `walkForward` sweep it is currently always `0` — the walk-forward fold runner was not wired to count ticks when this shipped, unlike the plain shard path.
-   * `state.size` is always `0` on every path (single execute, plain sweep, walk-forward alike) — nothing populates it anywhere yet. That is a known gap across the whole API, not a sweep-specific omission.
+   * `state.size` is an upfront estimate — range x the prepare's target cadence, set before any data is even loaded, not a query against loaded data — on a single execute and a plain sweep alike. A plain sweep's value is the sum of every shard's own `size` (each shard's per-run estimate x its own vector slice), the same additive shape `state.completed` already used above. `0` means the prepare context behind the job predates this field (a job whose prepare ran before the estimate existed) — never a guessed cadence standing in for a real one.
+   * On a `walkForward` sweep, `state.size` is still always `0`: fold runs were out of scope for the estimate the same way they are for `state.completed` above — a fold's `size` is simply never set, so the sum stays honest at `0` rather than needing a special case.
    */
   state: JobState;
 };
@@ -882,7 +891,7 @@ export type ResultMap = {
    * The strategy properties this run was given, echoed back as sent. Absent when the request carried none, so its presence is what distinguishes a parameterised run from one at the declared defaults — a stored result cannot otherwise say which vector produced it, and this endpoint is meant to be called repeatedly over one prepare.
    */
   params?: {
-    [key: string]: number | string | boolean;
+    [key: string]: ScalarStrategyParamValue;
   };
   /**
    * Number of signals emitted during strategy execution
@@ -1215,6 +1224,23 @@ export type Dataset = {
  * A `Dataset` plus a self link. Returned by `GET /datasets/{datasetId}`.
  */
 export type DatasetWithLinks = Dataset & {
+  /**
+   * Presigned GET URL to the current version's stored file — see `dataFormat` for
+   * which format it's actually in. Present only once the current version's status is
+   * `ready`. Long-lived (day-scale, not permanent): a DuckDB-WASM/`lastra-ts`-style
+   * reader issues HTTP range requests against it lazily over an extended viewing
+   * session, not in one shot like a browser upload.
+   *
+   */
+  dataUrl?: string;
+  /**
+   * Which format `dataUrl` is actually in — check this rather than assuming it
+   * matches how you uploaded it. `lastra` — our native columnar format — for a CSV (or
+   * gzip/zip of one) upload, always converted on ingest. `parquet` for a parquet
+   * upload, stored as-is today.
+   *
+   */
+  dataFormat?: "lastra" | "parquet";
   _links?: {
     self?: {
       href?: string;
@@ -1227,8 +1253,9 @@ export type DatasetWithLinks = Dataset & {
  */
 export type DatasetUploadTarget = {
   /**
-   * Presigned URL. `PUT` the raw CSV file here directly — no `Authorization` header,
-   * no other API credentials.
+   * Presigned URL. `PUT` the file here directly — the CSV or parquet itself, or a `.gz`/`.zip` of it
+   * (see `createDataset`'s own description) — no `Authorization` header, no other API
+   * credentials.
    *
    */
   url: string;
@@ -1289,7 +1316,7 @@ export type DatasetVersion = {
    */
   id?: string;
   /**
-   * Size of the uploaded file.
+   * Size of the stored file `dataUrl` points at — a converted `lastra` for a CSV/gzip/zip upload, or the parquet file itself, unconverted, for a parquet upload. Not the size of the bytes originally PUT to storage; see `dataFormat`.
    */
   bytes?: number;
   /**
@@ -1314,10 +1341,26 @@ export type DatasetVersion = {
    * The largest gap, in units of the discovered cadence step.
    */
   largestGapSteps?: number;
+  /**
+   * Presigned GET URL to the stored file — see `dataFormat` for which format it's in.
+   * Present once the version is `ready`. Long-lived (day-scale, not permanent): a
+   * DuckDB-WASM/`lastra-ts`-style reader issues HTTP range requests against it lazily over
+   * an extended viewing session, not in one shot like a browser upload.
+   *
+   */
+  dataUrl?: string;
+  /**
+   * Which format `dataUrl` is actually in — check this rather than assuming it matches
+   * how you uploaded it. `lastra` — our native columnar format — for a CSV (or gzip/zip
+   * of one) upload, always converted on ingest. `parquet` for a parquet upload, stored
+   * as-is today.
+   *
+   */
+  dataFormat?: "lastra" | "parquet";
 };
 
 /**
- * Progress of one upload, from staged through ingest. Postgres-backed once a version exists,
+ * Progress of one upload, from staged through ingest. Durably recorded once a version exists,
  * so `ready`/`failed` are permanent answers; `uploading`/`ingesting` reflect in-flight state
  * that can itself age out — see the `404` case on `GET .../uploads/{uploadId}`.
  *
@@ -1329,7 +1372,8 @@ export type DatasetUploadState = {
    * called yet.
    * * `ingesting` — `finalize` was called; the worker is parsing and validating the file.
    * * `ready` — ingested successfully. `version` carries the result.
-   * * `failed` — ingest rejected the file (e.g. bad CSV contract, mixed timestamp units).
+   * * `failed` — ingest rejected the file (e.g. bad CSV contract, mixed timestamp units, a
+   * `.zip` with no file inside or more than one).
    *
    */
   status: "uploading" | "ingesting" | "ready" | "failed";
@@ -2194,7 +2238,7 @@ export type ExecuteBacktestData = {
      *
      */
     params?: {
-      [key: string]: number | string | boolean;
+      [key: string]: ScalarStrategyParamValue;
     };
   };
   path: {

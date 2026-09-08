@@ -882,11 +882,22 @@ export const listDatasets = <ThrowOnError extends boolean = false>(
  * response. `instrument` must be a plain spot pair (`BASE/QUOTE`, exactly one `/`); derivative
  * forms (e.g. `BTC/USDT:USDT`) are rejected.
  *
- * **Upload format.** A CSV with a header row. Required columns: `timestamp` (ISO-8601, or
- * numeric epoch seconds/millis/micros — detected from the first row, then enforced for every
- * later row), `close`. Optional columns: `open`, `high`, `low`, `volume`, `quoteVolume`,
- * `bid`, `bidSize`, `ask`, `askSize`. Cadence and timestamp unit are discovered from the data,
- * not declared.
+ * **Upload format.** A CSV with a header row, or a parquet file with the same columns by
+ * name. Required: `timestamp` (ISO-8601, or numeric epoch seconds/millis/micros — detected
+ * from the first row, then enforced for every later row), `close`. Optional: `open`, `high`,
+ * `low`, `volume`, `quoteVolume`, `bid`, `bidSize`, `ask`, `askSize`. Cadence and timestamp
+ * unit are discovered from the data, not declared.
+ *
+ * A CSV upload is converted to our native columnar format (`lastra`) for storage. A parquet
+ * upload is stored as-is today. Either way, always check `dataFormat` on
+ * `GET /datasets/{datasetId}` and `GET /datasets/{datasetId}/uploads/{uploadId}` for which
+ * one `dataUrl` actually is, rather than assuming from how you uploaded it.
+ *
+ * The bytes PUT to `upload.url` may be that file directly, gzipped (`.gz`), or zipped
+ * (`.zip`, exactly one file inside — a dataset is one file regardless of how it travels).
+ * Format is detected from the decompressed content itself: there is no filename or
+ * `Content-Type` anywhere in this flow for a client to declare it with, so nothing needs to
+ * be sent besides the bytes.
  *
  */
 export const createDataset = <ThrowOnError extends boolean = false>(

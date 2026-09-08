@@ -1,5 +1,12 @@
 # @qtsurfer/api-client
 
+## 0.14.1
+
+### Patch Changes
+
+- Regenerate for OpenAPI 0.115.1. `executeBacktest` now accepts scalar strategy parameters and
+  returns them with its result; datasets expose their stored data URL and format.
+
 ## 0.14.0
 
 ### Minor Changes
