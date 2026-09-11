@@ -68,8 +68,8 @@ pluggable token stores so callers don't reinvent that plumbing.
 
 All operations are exported as standalone functions; every operation accepts an `Options` object and returns `{ data, error, response }`.
 
-The table is exhaustive: `src/generated/` is produced from the OpenAPI spec, so **all 29 operations**
-the spec declares are exported. The rows below describe **spec version 0.115.1**, which is versioned
+The table is exhaustive: `src/generated/` is produced from the OpenAPI spec, so **all 31 operations**
+the spec declares are exported. The rows below describe **spec version 0.119.0**, which is versioned
 independently of this package.
 
 | Function | Method | Path | Purpose |
@@ -103,6 +103,8 @@ independently of this package.
 | `openDatasetUpload` | POST | `/datasets/{datasetId}/uploads` | Open an upload session for a later dataset version |
 | `finalizeDatasetUpload` | POST | `/datasets/{datasetId}/uploads/{uploadId}/finalize` | Queue ingest after uploading a file |
 | `getDatasetUpload` | GET | `/datasets/{datasetId}/uploads/{uploadId}` | Get an upload's ingestion state |
+| `importDataset` | POST | `/datasets/imports` | Create a dataset by importing external history |
+| `getDatasetImport` | GET | `/datasets/{datasetId}/imports/{importId}` | Get an import's fetch and ingestion state |
 
 All generated types (`Exchange`, `InstrumentDetail`, `BacktestJobResult`, `PrepareJobState`, `ResultMap`, etc.) are re-exported from the root.
 

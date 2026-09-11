@@ -1,5 +1,11 @@
 # @qtsurfer/api-client
 
+## 0.15.0
+
+### Minor Changes
+
+- Regenerate for OpenAPI 0.119.0 with dataset imports and backtest base configuration.
+
 ## 0.14.1
 
 ### Patch Changes

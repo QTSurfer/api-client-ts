@@ -90,6 +90,12 @@ import type {
   GetDatasetUploadData,
   GetDatasetUploadResponse,
   GetDatasetUploadError,
+  ImportDatasetData,
+  ImportDatasetResponse,
+  ImportDatasetError,
+  GetDatasetImportData,
+  GetDatasetImportResponse,
+  GetDatasetImportError,
 } from "./types.gen";
 import { client as _heyApiClient } from "./client.gen";
 
@@ -750,14 +756,21 @@ export const getSweepRunEquityCurve = <ThrowOnError extends boolean = false>(
  * backtest result with the curve included.
  *
  * The same request (same `prepareJobId`, `strategyId`, `storeSignals`, `equityCurve`,
- * `params`) always returns the same `jobId` (idempotent) — a request that omits `equityCurve`
- * or `params` dedupes exactly as it did before those fields existed. Two different `params`
- * vectors over one prepare are two different jobs, and `9` and `9.0` are the same one.
+ * `baseConfig`, `params`) always returns the same `jobId` (idempotent) — a request that omits
+ * `equityCurve`, `baseConfig` or `params` dedupes exactly as it did before those fields
+ * existed. Two different `params` vectors over one prepare are two different jobs, and `9`
+ * and `9.0` are the same one.
  *
  * The re-run is an independent execution rather than a replay of the sweep trial — the two
  * paths do not share a simulator — but they are pinned to agree: one vector run both ways
  * matches on every leaderboard metric, asserted as a regression test. Treat a difference as a
  * bug worth reporting, not as expected behaviour.
+ *
+ * Optionally takes `baseConfig`, the same `SweepBaseConfig` shape `executeSweep` accepts —
+ * `initialFunding`, `feeRate`, `percentAmountToLock`, etc. — so the same object can be reused
+ * against either endpoint. This endpoint has one effective fee rate rather than a sweep's
+ * independent buy/sell legs: a `baseConfig` that resolves to different buy/sell rates, or sets
+ * a non-default `feeLeg`, is rejected with `400` rather than silently collapsed to one side.
  *
  * Works unchanged for a dataset-backed prepare (`exchangeId: user`) — the request body is
  * identical either way, since the instrument and range are recovered from `prepareJobId`.
@@ -1056,6 +1069,80 @@ export const getDatasetUpload = <ThrowOnError extends boolean = false>(
       },
     ],
     url: "/datasets/{datasetId}/uploads/{uploadId}",
+    ...options,
+  });
+};
+
+/**
+ * Create a dataset by importing history instead of uploading it
+ * A second way to get data into a dataset, alongside `POST /datasets`: instead of `PUT`ting a
+ * file yourself, ask the API to go fetch history on your behalf. Creates the dataset and
+ * starts the fetch in the same call — there is no separate upload step, and the result lands
+ * as a dataset version indistinguishable from an uploaded one once it's ready. Poll
+ * `GET /datasets/{datasetId}/imports/{importId}` for progress.
+ *
+ * `type` selects the source. `dex` — history over a pool/pair's own on-chain market — is the
+ * only value today; other source types join this same endpoint later.
+ *
+ * A `dex` import has two data shapes, chosen by the top-level `cadence`:
+ *
+ * * Omitted/blank (default) — on-chain swap history, replayed directly from the pool/pair's
+ * own chain. Cadence is native, not resampled: each swap keeps the timestamp it happened
+ * at rather than being bucketed into candles, so the resulting version's `cadence` is `rt`
+ * unless the swaps happen to sit on a fixed grid (see `DatasetVersion.cadence`).
+ * * One of `1s` / `1m` / `5m` — pre-aggregated candles at that width instead of raw trades.
+ * The resulting dataset's `type` is `klines`, not `ticker`. Not every network supports every
+ * cadence yet — an unsupported combination fails asynchronously, same as an unresolvable
+ * pool (see the `failed` status on the poll endpoint below).
+ *
+ */
+export const importDataset = <ThrowOnError extends boolean = false>(
+  options: Options<ImportDatasetData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).post<
+    ImportDatasetResponse,
+    ImportDatasetError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/datasets/imports",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  });
+};
+
+/**
+ * Get the state of an import/ingest
+ * Poll after `POST /datasets/imports` until `status` is `ready` or `failed`. An import spends
+ * real time fetching from its source before anything is even staged — `fetching` is the one
+ * status only an import ever reports; `ingesting`/`ready`/`failed` mean exactly what they do
+ * on `GET /datasets/{datasetId}/uploads/{uploadId}`, since an import re-enters that same
+ * ingest chain once it has fetched and staged its data.
+ *
+ */
+export const getDatasetImport = <ThrowOnError extends boolean = false>(
+  options: Options<GetDatasetImportData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).get<
+    GetDatasetImportResponse,
+    GetDatasetImportError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/datasets/{datasetId}/imports/{importId}",
     ...options,
   });
 };

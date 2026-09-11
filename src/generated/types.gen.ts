@@ -228,29 +228,22 @@ export type PrepareRequest = {
    */
   to: string;
   /**
-   * Output bar cadence for the prepared range. Defaults to the publisher's
-   * native cadence (`1s`); coarser cadences are produced on demand via
-   * resampling and stored alongside the native blob in cache. Coarser-than-
-   * source values must be exact multiples of the source cadence — invalid
-   * labels return `400`.
+   * Output bar cadence for the prepared range. Coarser cadences are produced on demand by
+   * resampling the source and stored alongside the native blob in cache. A target finer
+   * than the source, or not an exact multiple of it, returns `400`. What's accepted, and
+   * what omitting it means, depends on the source:
+   *
+   * * Managed exchange — one of `1s`, `5s`, `1m`, `3m`, `5m`, `15m`, `30m`, `1h`, `2h`,
+   * `4h`, `8h`, `12h`, `1d`, `1w`, `1q`; any other label returns `400`. Omitted = `1s`,
+   * the publisher's native cadence.
+   * * Dataset (`exchangeId: user`) — omitted = the dataset version's own discovered
+   * `cadence` (see `DatasetVersion.cadence`), served as-is. Any cadence equal to or
+   * coarser than it and an exact multiple of it is accepted, including ones outside the
+   * managed-exchange list (e.g. `15s`); an `rt` dataset can be resampled to any fixed
+   * cadence.
    *
    */
-  cadence?:
-    | "1s"
-    | "5s"
-    | "1m"
-    | "3m"
-    | "5m"
-    | "15m"
-    | "30m"
-    | "1h"
-    | "2h"
-    | "4h"
-    | "8h"
-    | "12h"
-    | "1d"
-    | "1w"
-    | "1q";
+  cadence?: string;
 };
 
 /**
@@ -265,7 +258,8 @@ export type JobState = {
    * Current status of the job. Treat `Completed | Aborted | Failed` as
    * terminal; `New | Started` mean keep polling. A single-instrument prepare
    * is always terminal (`Completed`) — decide from
-   * `PrepareJobState.coverageRatio`, not by polling.
+   * `PrepareJobState.coverageRatio` (or `dataFrom`/`dataTo` against an `rt` dataset,
+   * which has no ratio), not by polling.
    *
    */
   status: "New" | "Started" | "Completed" | "Aborted" | "Failed";
@@ -303,8 +297,10 @@ export type JobState = {
  * dataset-backed prepare (`exchangeId: user`), coverage is reported on the dataset's own
  * cadence grid instead — hour-walking a daily dataset would report `1/24` and read as
  * broken — via `cadence`/`gaps`/`largestGapSteps`; `totalHours`/`hoursWithData`/
- * `hoursWithoutData` are absent in that case. `dataFrom`/`dataTo`/`coverageRatio` are present
- * either way, computed accordingly.
+ * `hoursWithoutData` are absent in that case. `dataFrom`/`dataTo` are present either way, and
+ * `coverageRatio` too, computed accordingly — except against a dataset whose `cadence` is `rt`:
+ * with no fixed step there is no expected row count to measure against, so `coverageRatio`
+ * is absent and `gaps`/`largestGapSteps` are `0`.
  *
  */
 export type PrepareJobState = JobState & {
@@ -321,7 +317,8 @@ export type PrepareJobState = JobState & {
    * `totalHours` is 0), the fraction of hours in the requested range that have served
    * data. Against a dataset (`exchangeId: user`): `rows / expectedStepsAtCadence`
    * over the dataset version's own range — echoing what ingest computed once, not
-   * recomputed against a narrower prepare request.
+   * recomputed against a narrower prepare request. Absent for an `rt` dataset (no
+   * fixed step, so no expected row count).
    *
    */
   coverageRatio?: number;
@@ -338,20 +335,21 @@ export type PrepareJobState = JobState & {
    */
   hoursWithData?: number;
   /**
-   * The dataset version's own discovered cadence (e.g. `1m`, `1h`). Only present for a
-   * dataset-backed prepare (`exchangeId: user`).
+   * The dataset version's own discovered cadence — a fixed grid (e.g. `1m`, `1h`) or
+   * `rt` (see `DatasetVersion.cadence`). Only present for a dataset-backed prepare
+   * (`exchangeId: user`).
    *
    */
   cadence?: string;
   /**
    * Number of gaps in the dataset version at its own cadence, as discovered at ingest
-   * time. Only present for a dataset-backed prepare.
+   * time. `0` for `rt`. Only present for a dataset-backed prepare.
    *
    */
   gaps?: number;
   /**
-   * The largest gap in the dataset version, in units of its own cadence step. Only
-   * present for a dataset-backed prepare.
+   * The largest gap in the dataset version, in units of its own cadence step. `0` for
+   * `rt`. Only present for a dataset-backed prepare.
    *
    */
   largestGapSteps?: number;
@@ -1182,9 +1180,12 @@ export type Dataset = {
    */
   name: string;
   /**
-   * Always `ticker` in v1.
+   * `ticker` for an upload or a `dex` import with no `cadence` requested (native per-trade
+   * data). `klines` for a `dex` import that requested a candle `cadence` — pre-aggregated
+   * bars rather than raw ticks. Purely informational; both shapes are read the same way.
+   *
    */
-  type: "ticker";
+  type: "ticker" | "klines";
   instrument: Instrument;
   /**
    * When the dataset was created.
@@ -1213,8 +1214,8 @@ export type Dataset = {
    */
   to?: string;
   /**
-   * `currentVersionId`'s own discovered bar cadence (e.g. `1s`, `1m`, `1h`). Absent until a
-   * version exists.
+   * `currentVersionId`'s own discovered cadence — a fixed grid (e.g. `1s`, `1m`, `1h`) or
+   * `rt` (see `DatasetVersion.cadence`). Absent until a version exists.
    *
    */
   cadence?: string;
@@ -1324,7 +1325,13 @@ export type DatasetVersion = {
    */
   rows?: number;
   /**
-   * The discovered bar cadence (e.g. `1s`, `1m`, `1h`).
+   * The cadence discovered from the data's own timestamps. Either a fixed grid — `1s`,
+   * `5s`, `15s`, `1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1d` — when at least half the
+   * intervals between consecutive rows fall on that step (small clock jitter tolerated), or
+   * `rt`: native data at the rate it was captured, each row at its own timestamp with no
+   * fixed step — per-trade on-chain swaps, block-spaced or sub-second ticks, irregular
+   * intervals. An `rt` dataset can be resampled to any fixed cadence at prepare time.
+   *
    */
   cadence?: string;
   /**
@@ -1334,11 +1341,11 @@ export type DatasetVersion = {
    */
   timestampUnit?: "iso" | "s" | "ms" | "us";
   /**
-   * Number of gaps at the discovered cadence.
+   * Number of gaps at the discovered cadence. Always `0` for `rt`.
    */
   gaps?: number;
   /**
-   * The largest gap, in units of the discovered cadence step.
+   * The largest gap, in units of the discovered cadence step. Always `0` for `rt`.
    */
   largestGapSteps?: number;
   /**
@@ -1381,6 +1388,154 @@ export type DatasetUploadState = {
    * The ingest job id, while `status` is `ingesting`.
    */
   jobId?: string;
+  /**
+   * A human-readable reason, present when `status` is `failed` (e.g. bad CSV contract,
+   * mixed timestamp units, a `.zip` with no file inside or more than one). Durably
+   * recorded alongside the failure itself, so it stays available however long after the
+   * fact you poll — not tied to how recently the failure happened.
+   *
+   */
+  error?: string;
+  /**
+   * Present when `status` is `ready` or `failed`.
+   */
+  version?: DatasetVersion;
+};
+
+/**
+ * `POST /datasets/imports`'s request body. A common block plus one type-specific block,
+ * selected by `type` — `dex` is the only value today.
+ *
+ */
+export type DatasetImportRequest = {
+  /**
+   * A name unique among your datasets. `409` if already taken.
+   */
+  name: string;
+  instrument: Instrument;
+  /**
+   * Start of the range to fetch, inclusive. Must be before `to`.
+   */
+  from: string;
+  /**
+   * End of the range to fetch, exclusive. The total span is capped by your tier — a
+   * request wider than that ceiling is `400`, regardless of source type.
+   *
+   */
+  to: string;
+  /**
+   * Optional. Omitted/blank keeps native per-trade event cadence — each swap at its own
+   * timestamp, so the resulting version's `cadence` is `rt` unless the swaps happen to sit
+   * on a fixed grid (see `DatasetVersion.cadence`). Set to `1s`, `1m` or
+   * `5m` instead to get pre-aggregated candles at that width rather than raw trades (the
+   * resulting dataset's `type` becomes `klines`); any other value is `400`. Not every
+   * network supports every cadence — an unsupported combination fails asynchronously, not
+   * at request time (see `DatasetImportState.error`).
+   *
+   */
+  cadence?: "1s" | "1m" | "5m";
+  /**
+   * The source to fetch from. `dex` is the only value today.
+   */
+  type: "dex";
+  dex?: DatasetImportDexRequest;
+};
+
+/**
+ * The `dex` source's own fields — required when `type` is `dex`. `id`/`version` are required
+ * for a plain (native-cadence) import; both are ignored if the top-level `cadence` requested
+ * pre-aggregated candles instead, since that path needs neither a protocol nor a version
+ * distinction.
+ *
+ */
+export type DatasetImportDexRequest = {
+  /**
+   * Which chain the pool/pair lives on.
+   */
+  network: "ethereum" | "robinhood";
+  /**
+   * Which on-chain DEX protocol `contract` implements. Required unless the top-level
+   * `cadence` requested pre-aggregated candles, in which case it's ignored.
+   *
+   */
+  id?: "uniswap";
+  /**
+   * Uniswap version the pool/pair contract implements. Required unless the top-level
+   * `cadence` requested pre-aggregated candles, in which case it's ignored.
+   *
+   */
+  version?: "v2" | "v3";
+  /**
+   * The pool (v3) or pair (v2) contract address.
+   */
+  contract: string;
+  /**
+   * The factory that deployed `contract`. Optional — when omitted, it is discovered
+   * on-chain from `contract` itself at fetch time. Supply it explicitly only if you
+   * already know it, or the pool/pair belongs to a factory other than the canonical one
+   * for `network`/`version`. Either way, the pool/pair is validated against whichever
+   * factory is used before anything is fetched — a wrong or unrelated factory fails the
+   * import rather than silently fetching from the wrong pool. Ignored if the top-level
+   * `cadence` requested pre-aggregated candles.
+   *
+   */
+  factory?: string;
+};
+
+/**
+ * The response to `POST /datasets/imports` — the dataset now exists, and its fetch has started.
+ */
+export type DatasetImportCreated = {
+  /**
+   * Opaque id of the newly created dataset — same id space as `POST /datasets`.
+   */
+  datasetId: string;
+  /**
+   * Identifies this import. Pass to `GET /datasets/{datasetId}/imports/{importId}` to poll
+   * it — there is no separate "finalize" step the way an upload has.
+   *
+   */
+  importId: string;
+  /**
+   * The fetch/ingest job id.
+   */
+  jobId: string;
+  /**
+   * Always `fetching` in this response — the fetch has only just started.
+   */
+  status: "fetching";
+};
+
+/**
+ * Progress of one import, from fetching through ingest. `fetching` is the one status only an
+ * import ever reports — an upload's file already exists by the time you can poll it; an
+ * import's doesn't, until this source finishes fetching it.
+ *
+ */
+export type DatasetImportState = {
+  importId: string;
+  /**
+   * * `fetching` — reading from the source; nothing staged yet.
+   * * `ingesting` — fetch complete, staged, and re-entered the same ingest chain an
+   * upload uses; the worker is parsing and validating it.
+   * * `ready` — ingested successfully. `version` carries the result.
+   * * `failed` — the fetch or the ingest that followed it was rejected. `error` names why.
+   *
+   */
+  status: "fetching" | "ingesting" | "ready" | "failed";
+  /**
+   * The fetch/ingest job id, while `status` is `fetching` or `ingesting`.
+   */
+  jobId?: string;
+  /**
+   * A human-readable reason, present when `status` is `failed` — an unresolvable
+   * pool/pair, no data in the requested range, a range older than the configured source
+   * retains, the fetch exceeding your tier's time ceiling, or any of
+   * `DatasetUploadState.error`'s own ingest-side reasons once fetching hands off to it.
+   * Durably recorded, same as on the upload path.
+   *
+   */
+  error?: string;
   /**
    * Present when `status` is `ready` or `failed`.
    */
@@ -1907,8 +2062,8 @@ export type PrepareBacktestErrors = {
    * Invalid request or parameters. Also returned when `from` is older than the configured
    * lookback window or `to` is in the future. For `exchangeId: user`, also returned when
    * the dataset's current upload has not finished ingesting, or `cadence` asks for a finer
-   * granularity than the dataset's own discovered cadence, or the requested range exceeds
-   * your tier's range limit.
+   * granularity than the dataset's own discovered cadence (or one that isn't an exact
+   * multiple of it), or the requested range exceeds your tier's range limit.
    *
    */
   400: ResponseError;
@@ -2218,6 +2373,16 @@ export type ExecuteBacktestData = {
      */
     storeSignals?: boolean;
     equityCurve?: EquityCurveOptions;
+    /**
+     * Capital/fee/position-size overrides for this one run — the same shape
+     * `executeSweep`'s `baseConfig` accepts. Omit to run at the platform defaults
+     * (`initialFunding: 100`, `feeRate: 0.001`). `buyFeeRate`/`sellFeeRate`/`feeLeg`
+     * are accepted for shape compatibility with a sweep's `baseConfig`, but this
+     * endpoint has one fee-rate slot: a value that implies asymmetric buy/sell fees,
+     * or a non-default `feeLeg`, is rejected with `400`.
+     *
+     */
+    baseConfig?: SweepBaseConfig;
     /**
      * Strategy properties to apply to this run. Omit to run the strategy's declared
      * defaults, which is exactly what a request without this field has always done.
@@ -2627,6 +2792,88 @@ export type GetDatasetUploadResponses = {
 
 export type GetDatasetUploadResponse =
   GetDatasetUploadResponses[keyof GetDatasetUploadResponses];
+
+export type ImportDatasetData = {
+  /**
+   * What to fetch, and where from
+   */
+  body: DatasetImportRequest;
+  path?: never;
+  query?: never;
+  url: "/datasets/imports";
+};
+
+export type ImportDatasetErrors = {
+  /**
+   * Invalid request; `instrument` isn't a plain spot pair; `from >= to`; `cadence` present
+   * but not one of its supported values; the requested range exceeds your tier's import
+   * range ceiling; the requested range's rough size estimate exceeds your tier's row limit;
+   * `dex.network`/`dex.id` not one of their supported values; `dex.contract`/`dex.factory`
+   * fail basic shape validation; or, when `cadence` is omitted, `dex.id`/`dex.version`
+   * missing. Whether the pool/pair actually exists and resolves — and, for a candle
+   * `cadence`, whether that combination is actually servable on the requested `network` —
+   * is checked later, asynchronously — see the `failed` status on the poll endpoint below.
+   *
+   */
+  400: ResponseError;
+  /**
+   * You already have a dataset with this `name`
+   */
+  409: ResponseError;
+  /**
+   * Your tier's dataset count limit is reached. Delete one, or upgrade.
+   */
+  429: ResponseError;
+};
+
+export type ImportDatasetError = ImportDatasetErrors[keyof ImportDatasetErrors];
+
+export type ImportDatasetResponses = {
+  /**
+   * Dataset created, fetch started
+   */
+  202: DatasetImportCreated;
+};
+
+export type ImportDatasetResponse =
+  ImportDatasetResponses[keyof ImportDatasetResponses];
+
+export type GetDatasetImportData = {
+  body?: never;
+  path: {
+    /**
+     * The id returned by `POST /datasets/imports`
+     */
+    datasetId: string;
+    /**
+     * The `importId` returned by `POST /datasets/imports`
+     */
+    importId: string;
+  };
+  query?: never;
+  url: "/datasets/{datasetId}/imports/{importId}";
+};
+
+export type GetDatasetImportErrors = {
+  /**
+   * No such dataset for this user, or genuinely nothing is known about this `importId`.
+   *
+   */
+  404: ResponseError;
+};
+
+export type GetDatasetImportError =
+  GetDatasetImportErrors[keyof GetDatasetImportErrors];
+
+export type GetDatasetImportResponses = {
+  /**
+   * Current fetch/ingest state
+   */
+  200: DatasetImportState;
+};
+
+export type GetDatasetImportResponse =
+  GetDatasetImportResponses[keyof GetDatasetImportResponses];
 
 export type ClientOptions = {
   baseUrl:

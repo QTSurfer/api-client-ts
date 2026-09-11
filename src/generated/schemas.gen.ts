@@ -335,30 +335,20 @@ the dataset instead of its current one. Defaults to the dataset's current versio
     },
     cadence: {
       type: "string",
-      description: `Output bar cadence for the prepared range. Defaults to the publisher's
-native cadence (\`1s\`); coarser cadences are produced on demand via
-resampling and stored alongside the native blob in cache. Coarser-than-
-source values must be exact multiples of the source cadence — invalid
-labels return \`400\`.
+      description: `Output bar cadence for the prepared range. Coarser cadences are produced on demand by
+resampling the source and stored alongside the native blob in cache. A target finer
+than the source, or not an exact multiple of it, returns \`400\`. What's accepted, and
+what omitting it means, depends on the source:
+
+* Managed exchange — one of \`1s\`, \`5s\`, \`1m\`, \`3m\`, \`5m\`, \`15m\`, \`30m\`, \`1h\`, \`2h\`,
+  \`4h\`, \`8h\`, \`12h\`, \`1d\`, \`1w\`, \`1q\`; any other label returns \`400\`. Omitted = \`1s\`,
+  the publisher's native cadence.
+* Dataset (\`exchangeId: user\`) — omitted = the dataset version's own discovered
+  \`cadence\` (see \`DatasetVersion.cadence\`), served as-is. Any cadence equal to or
+  coarser than it and an exact multiple of it is accepted, including ones outside the
+  managed-exchange list (e.g. \`15s\`); an \`rt\` dataset can be resampled to any fixed
+  cadence.
 `,
-      enum: [
-        "1s",
-        "5s",
-        "1m",
-        "3m",
-        "5m",
-        "15m",
-        "30m",
-        "1h",
-        "2h",
-        "4h",
-        "8h",
-        "12h",
-        "1d",
-        "1w",
-        "1q",
-      ],
-      default: "1s",
     },
   },
   example: {
@@ -386,7 +376,8 @@ export const JobStateSchema = {
       description: `Current status of the job. Treat \`Completed | Aborted | Failed\` as
 terminal; \`New | Started\` mean keep polling. A single-instrument prepare
 is always terminal (\`Completed\`) — decide from
-\`PrepareJobState.coverageRatio\`, not by polling.
+\`PrepareJobState.coverageRatio\` (or \`dataFrom\`/\`dataTo\` against an \`rt\` dataset,
+which has no ratio), not by polling.
 `,
       enum: ["New", "Started", "Completed", "Aborted", "Failed"],
       example: "Completed",
@@ -433,8 +424,10 @@ walked hour by hour: \`totalHours\`/\`hoursWithData\`/\`hoursWithoutData\`. Agai
 dataset-backed prepare (\`exchangeId: user\`), coverage is reported on the dataset's own
 cadence grid instead — hour-walking a daily dataset would report \`1/24\` and read as
 broken — via \`cadence\`/\`gaps\`/\`largestGapSteps\`; \`totalHours\`/\`hoursWithData\`/
-\`hoursWithoutData\` are absent in that case. \`dataFrom\`/\`dataTo\`/\`coverageRatio\` are present
-either way, computed accordingly.
+\`hoursWithoutData\` are absent in that case. \`dataFrom\`/\`dataTo\` are present either way, and
+\`coverageRatio\` too, computed accordingly — except against a dataset whose \`cadence\` is \`rt\`:
+with no fixed step there is no expected row count to measure against, so \`coverageRatio\`
+is absent and \`gaps\`/\`largestGapSteps\` are \`0\`.
 `,
   allOf: [
     {
@@ -466,7 +459,8 @@ either way, computed accordingly.
 \`totalHours\` is 0), the fraction of hours in the requested range that have served
 data. Against a dataset (\`exchangeId: user\`): \`rows / expectedStepsAtCadence\`
 over the dataset version's own range — echoing what ingest computed once, not
-recomputed against a narrower prepare request.
+recomputed against a narrower prepare request. Absent for an \`rt\` dataset (no
+fixed step, so no expected row count).
 `,
           example: 0.994,
         },
@@ -486,22 +480,23 @@ a dataset-backed prepare.
         },
         cadence: {
           type: "string",
-          description: `The dataset version's own discovered cadence (e.g. \`1m\`, \`1h\`). Only present for a
-dataset-backed prepare (\`exchangeId: user\`).
+          description: `The dataset version's own discovered cadence — a fixed grid (e.g. \`1m\`, \`1h\`) or
+\`rt\` (see \`DatasetVersion.cadence\`). Only present for a dataset-backed prepare
+(\`exchangeId: user\`).
 `,
           example: "1m",
         },
         gaps: {
           type: "integer",
           description: `Number of gaps in the dataset version at its own cadence, as discovered at ingest
-time. Only present for a dataset-backed prepare.
+time. \`0\` for \`rt\`. Only present for a dataset-backed prepare.
 `,
           example: 0,
         },
         largestGapSteps: {
           type: "integer",
-          description: `The largest gap in the dataset version, in units of its own cadence step. Only
-present for a dataset-backed prepare.
+          description: `The largest gap in the dataset version, in units of its own cadence step. \`0\` for
+\`rt\`. Only present for a dataset-backed prepare.
 `,
           example: 0,
         },
@@ -654,7 +649,7 @@ export const SweepBaseConfigSchema = {
       type: "number",
       format: "double",
       exclusiveMinimum: 0,
-      default: 10000,
+      default: 100,
     },
     feeRate: {
       type: "number",
@@ -1987,8 +1982,11 @@ what a dataset covers. Absent until a version exists.
     },
     type: {
       type: "string",
-      enum: ["ticker"],
-      description: "Always `ticker` in v1.",
+      enum: ["ticker", "klines"],
+      description: `\`ticker\` for an upload or a \`dex\` import with no \`cadence\` requested (native per-trade
+data). \`klines\` for a \`dex\` import that requested a candle \`cadence\` — pre-aggregated
+bars rather than raw ticks. Purely informational; both shapes are read the same way.
+`,
       example: "ticker",
     },
     instrument: {
@@ -2032,8 +2030,8 @@ a version exists.
     },
     cadence: {
       type: "string",
-      description: `\`currentVersionId\`'s own discovered bar cadence (e.g. \`1s\`, \`1m\`, \`1h\`). Absent until a
-version exists.
+      description: `\`currentVersionId\`'s own discovered cadence — a fixed grid (e.g. \`1s\`, \`1m\`, \`1h\`) or
+\`rt\` (see \`DatasetVersion.cadence\`). Absent until a version exists.
 `,
       example: "1m",
     },
@@ -2202,7 +2200,13 @@ not declared by the caller.
     },
     cadence: {
       type: "string",
-      description: "The discovered bar cadence (e.g. `1s`, `1m`, `1h`).",
+      description: `The cadence discovered from the data's own timestamps. Either a fixed grid — \`1s\`,
+\`5s\`, \`15s\`, \`1m\`, \`5m\`, \`15m\`, \`30m\`, \`1h\`, \`4h\`, \`1d\` — when at least half the
+intervals between consecutive rows fall on that step (small clock jitter tolerated), or
+\`rt\`: native data at the rate it was captured, each row at its own timestamp with no
+fixed step — per-trade on-chain swaps, block-spaced or sub-second ticks, irregular
+intervals. An \`rt\` dataset can be resampled to any fixed cadence at prepare time.
+`,
       example: "1s",
     },
     timestampUnit: {
@@ -2215,12 +2219,14 @@ numeric values fell in (seconds, millis, or micros).
     },
     gaps: {
       type: "integer",
-      description: "Number of gaps at the discovered cadence.",
+      description:
+        "Number of gaps at the discovered cadence. Always `0` for `rt`.",
       example: 0,
     },
     largestGapSteps: {
       type: "integer",
-      description: "The largest gap, in units of the discovered cadence step.",
+      description:
+        "The largest gap, in units of the discovered cadence step. Always `0` for `rt`.",
       example: 0,
     },
     dataUrl: {
@@ -2273,6 +2279,209 @@ that can itself age out — see the \`404\` case on \`GET .../uploads/{uploadId}
     jobId: {
       type: "string",
       description: "The ingest job id, while `status` is `ingesting`.",
+    },
+    error: {
+      type: "string",
+      description: `A human-readable reason, present when \`status\` is \`failed\` (e.g. bad CSV contract,
+mixed timestamp units, a \`.zip\` with no file inside or more than one). Durably
+recorded alongside the failure itself, so it stays available however long after the
+fact you poll — not tied to how recently the failure happened.
+`,
+      example: "line 3: column 'close' is not a number: not-a-number",
+    },
+    version: {
+      allOf: [
+        {
+          $ref: "#/components/schemas/DatasetVersion",
+        },
+      ],
+      description: "Present when `status` is `ready` or `failed`.",
+    },
+  },
+} as const;
+
+export const DatasetImportRequestSchema = {
+  type: "object",
+  description: `\`POST /datasets/imports\`'s request body. A common block plus one type-specific block,
+selected by \`type\` — \`dex\` is the only value today.
+`,
+  required: ["name", "instrument", "from", "to", "type"],
+  properties: {
+    name: {
+      type: "string",
+      description: "A name unique among your datasets. `409` if already taken.",
+      example: "weth-usdc-week",
+    },
+    instrument: {
+      $ref: "#/components/schemas/Instrument",
+    },
+    from: {
+      type: "string",
+      format: "date-time",
+      description:
+        "Start of the range to fetch, inclusive. Must be before `to`.",
+      example: "2026-08-01T00:00:00Z",
+    },
+    to: {
+      type: "string",
+      format: "date-time",
+      description: `End of the range to fetch, exclusive. The total span is capped by your tier — a
+request wider than that ceiling is \`400\`, regardless of source type.
+`,
+      example: "2026-08-08T00:00:00Z",
+    },
+    cadence: {
+      type: "string",
+      enum: ["1s", "1m", "5m"],
+      description: `Optional. Omitted/blank keeps native per-trade event cadence — each swap at its own
+timestamp, so the resulting version's \`cadence\` is \`rt\` unless the swaps happen to sit
+on a fixed grid (see \`DatasetVersion.cadence\`). Set to \`1s\`, \`1m\` or
+\`5m\` instead to get pre-aggregated candles at that width rather than raw trades (the
+resulting dataset's \`type\` becomes \`klines\`); any other value is \`400\`. Not every
+network supports every cadence — an unsupported combination fails asynchronously, not
+at request time (see \`DatasetImportState.error\`).
+`,
+    },
+    type: {
+      type: "string",
+      enum: ["dex"],
+      description: "The source to fetch from. `dex` is the only value today.",
+      example: "dex",
+    },
+    dex: {
+      $ref: "#/components/schemas/DatasetImportDexRequest",
+    },
+  },
+} as const;
+
+export const DatasetImportDexRequestSchema = {
+  type: "object",
+  description: `The \`dex\` source's own fields — required when \`type\` is \`dex\`. \`id\`/\`version\` are required
+for a plain (native-cadence) import; both are ignored if the top-level \`cadence\` requested
+pre-aggregated candles instead, since that path needs neither a protocol nor a version
+distinction.
+`,
+  required: ["network", "contract"],
+  properties: {
+    network: {
+      type: "string",
+      enum: ["ethereum", "robinhood"],
+      description: "Which chain the pool/pair lives on.",
+      example: "ethereum",
+    },
+    id: {
+      type: "string",
+      enum: ["uniswap"],
+      description: `Which on-chain DEX protocol \`contract\` implements. Required unless the top-level
+\`cadence\` requested pre-aggregated candles, in which case it's ignored.
+`,
+      example: "uniswap",
+    },
+    version: {
+      type: "string",
+      enum: ["v2", "v3"],
+      description: `Uniswap version the pool/pair contract implements. Required unless the top-level
+\`cadence\` requested pre-aggregated candles, in which case it's ignored.
+`,
+      example: "v3",
+    },
+    contract: {
+      type: "string",
+      description: "The pool (v3) or pair (v2) contract address.",
+      example: "0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640",
+    },
+    factory: {
+      type: "string",
+      description: `The factory that deployed \`contract\`. Optional — when omitted, it is discovered
+on-chain from \`contract\` itself at fetch time. Supply it explicitly only if you
+already know it, or the pool/pair belongs to a factory other than the canonical one
+for \`network\`/\`version\`. Either way, the pool/pair is validated against whichever
+factory is used before anything is fetched — a wrong or unrelated factory fails the
+import rather than silently fetching from the wrong pool. Ignored if the top-level
+\`cadence\` requested pre-aggregated candles.
+`,
+    },
+  },
+  example: {
+    network: "ethereum",
+    id: "uniswap",
+    version: "v3",
+    contract: "0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640",
+  },
+} as const;
+
+export const DatasetImportCreatedSchema = {
+  type: "object",
+  description:
+    "The response to `POST /datasets/imports` — the dataset now exists, and its fetch has started.",
+  required: ["datasetId", "importId", "jobId", "status"],
+  properties: {
+    datasetId: {
+      type: "string",
+      description:
+        "Opaque id of the newly created dataset — same id space as `POST /datasets`.",
+      example: "ds_3f9a1c2e7b0d4a5f",
+    },
+    importId: {
+      type: "string",
+      description: `Identifies this import. Pass to \`GET /datasets/{datasetId}/imports/{importId}\` to poll
+it — there is no separate "finalize" step the way an upload has.
+`,
+      example: "imp_01j9z1x2y3z4a5b6c7d8e9f0g1",
+    },
+    jobId: {
+      type: "string",
+      description: "The fetch/ingest job id.",
+      example:
+        "dataset-import:00000000-.../ds_3f9a1c2e7b0d4a5f:imp_01j9z1x2y3z4a5b6c7d8e9f0g1",
+    },
+    status: {
+      type: "string",
+      enum: ["fetching"],
+      description:
+        "Always `fetching` in this response — the fetch has only just started.",
+      example: "fetching",
+    },
+  },
+} as const;
+
+export const DatasetImportStateSchema = {
+  type: "object",
+  description: `Progress of one import, from fetching through ingest. \`fetching\` is the one status only an
+import ever reports — an upload's file already exists by the time you can poll it; an
+import's doesn't, until this source finishes fetching it.
+`,
+  required: ["importId", "status"],
+  properties: {
+    importId: {
+      type: "string",
+      example: "imp_01j9z1x2y3z4a5b6c7d8e9f0g1",
+    },
+    status: {
+      type: "string",
+      enum: ["fetching", "ingesting", "ready", "failed"],
+      description: `* \`fetching\` — reading from the source; nothing staged yet.
+* \`ingesting\` — fetch complete, staged, and re-entered the same ingest chain an
+  upload uses; the worker is parsing and validating it.
+* \`ready\` — ingested successfully. \`version\` carries the result.
+* \`failed\` — the fetch or the ingest that followed it was rejected. \`error\` names why.
+`,
+      example: "ready",
+    },
+    jobId: {
+      type: "string",
+      description:
+        "The fetch/ingest job id, while `status` is `fetching` or `ingesting`.",
+    },
+    error: {
+      type: "string",
+      description: `A human-readable reason, present when \`status\` is \`failed\` — an unresolvable
+pool/pair, no data in the requested range, a range older than the configured source
+retains, the fetch exceeding your tier's time ceiling, or any of
+\`DatasetUploadState.error\`'s own ingest-side reasons once fetching hands off to it.
+Durably recorded, same as on the upload path.
+`,
+      example: "Import exceeded the tier's 12 minute ceiling",
     },
     version: {
       allOf: [
