@@ -1,5 +1,12 @@
 # @qtsurfer/api-client
 
+## 0.16.0
+
+### Minor Changes
+
+- Regenerate for OpenAPI 0.123.0: `Dataset` gains `status` (`ready`/`failed`/`pending`) plus
+  `bytes`/`rows`/`gaps`/`largestGapSteps`/`error`.
+
 ## 0.15.0
 
 ### Minor Changes
