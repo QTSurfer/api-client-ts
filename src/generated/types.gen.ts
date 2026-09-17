@@ -104,6 +104,111 @@ export type HalLink = {
 };
 
 /**
+ * Your identity and tier limits. No database call behind this one — safe to fetch on every
+ * page load. Live usage against these limits is a separate resource, `GET /account/usage`,
+ * deliberately: usage changes on every upload/execution and costs a query to compute, this
+ * one doesn't.
+ *
+ */
+export type Account = {
+  /**
+   * Your account id — the JWT `sub` claim.
+   */
+  userId: string;
+  /**
+   * Your current subscription tier.
+   */
+  tier: string;
+  /**
+   * Maximum number of active datasets your tier allows.
+   */
+  maxDatasets: number;
+  /**
+   * Maximum size, in bytes, of a single dataset version.
+   */
+  maxDatasetBytes: number;
+  /**
+   * Maximum combined storage, in bytes, across every dataset, strategy-execution signal,
+   * and registered strategy on your account — one shared pool, not a separate cap per
+   * resource type, since they all compete for the same underlying storage. See `GET
+   * /account/usage`'s `storageBytesUsed` for your current usage against this number.
+   *
+   */
+  maxTotalStorageBytes: number;
+  _links: AccountLinks;
+};
+
+/**
+ * HAL `_links` for `GET /account`
+ */
+export type AccountLinks = {
+  /**
+   * Link to this resource.
+   */
+  self: HalLink;
+  /**
+   * Link to your live usage, `GET /account/usage`.
+   */
+  usage: HalLink;
+};
+
+/**
+ * Your live usage of the shared storage pool `GET /account`'s `maxTotalStorageBytes` caps.
+ * Not guaranteed real-time — a just-completed upload or strategy execution may take a short
+ * moment to be reflected here.
+ *
+ */
+export type AccountUsage = {
+  /**
+   * Active datasets counted — the same set `GET /account`'s `maxDatasets` limits.
+   */
+  datasetsUsed: number;
+  /**
+   * Combined bytes of every active dataset's current version.
+   */
+  datasetBytesUsed: number;
+  /**
+   * Recorded strategy-execution signal uploads.
+   */
+  signalsUsed: number;
+  /**
+   * Combined bytes of every recorded signal upload.
+   */
+  signalBytesUsed: number;
+  /**
+   * Registered strategies (see `GET /strategies`).
+   */
+  strategiesUsed: number;
+  /**
+   * Combined bytes of each registered strategy's source plus its latest compiled
+   * bytecode. Superseded (non-latest) compilations aren't counted.
+   *
+   */
+  strategyBytesUsed: number;
+  /**
+   * `datasetBytesUsed + signalBytesUsed + strategyBytesUsed` — the number checked
+   * against `GET /account`'s `maxTotalStorageBytes`.
+   *
+   */
+  storageBytesUsed: number;
+  _links: AccountUsageLinks;
+};
+
+/**
+ * HAL `_links` for `GET /account/usage`
+ */
+export type AccountUsageLinks = {
+  /**
+   * Link to this resource.
+   */
+  self: HalLink;
+  /**
+   * Link to your tier limits, `GET /account`.
+   */
+  account: HalLink;
+};
+
+/**
  * Exchange instrument with per-data-type coverage and market info
  */
 export type InstrumentDetail = {
@@ -1165,9 +1270,10 @@ export type StrategyState = {
  * A dataset's own metadata — not its data. `currentVersionId` is what a prepare against
  * `exchangeId: user` reads by default; see `DatasetVersion` for what a version carries.
  *
- * `from`/`to`/`cadence` mirror that current version's own discovered range and cadence, so
- * you don't need a second call to `GET /datasets/{datasetId}/uploads/{uploadId}` just to see
- * what a dataset covers. Absent until a version exists.
+ * `from`/`to`/`cadence`/`timestampUnit`/`bytes`/`rows`/`gaps`/`largestGapSteps` mirror that
+ * current version's own discovered range, cadence, timestamp unit and metrics, so you don't
+ * need a second call to `GET /datasets/{datasetId}/uploads/{uploadId}` just to see what a
+ * dataset covers.
  *
  */
 export type Dataset = {
@@ -1219,6 +1325,47 @@ export type Dataset = {
    *
    */
   cadence?: string;
+  /**
+   * `currentVersionId`'s own timestamp unit (see `DatasetVersion.timestampUnit`) — decode
+   * the `timestamp` column of `dataUrl`'s file accordingly. Present only when `status` is
+   * `ready`.
+   *
+   */
+  timestampUnit?: "iso" | "s" | "ms" | "us";
+  /**
+   * * `ready` — `currentVersionId` is set; `from`/`to`/`cadence`/`bytes`/`rows`/`gaps`/
+   * `largestGapSteps` describe it.
+   * * `failed` — the most recent upload/import attempt failed. `currentVersionId` and the
+   * fields above are absent — there is nothing to read yet. See `error`.
+   * * `pending` — nothing has ever been attempted (just created, or an upload was never
+   * finalized).
+   *
+   */
+  status: "ready" | "failed" | "pending";
+  /**
+   * Size of `currentVersionId`'s own stored file. Present only when `status` is `ready` —
+   * see `DatasetVersion.bytes` for what it measures exactly.
+   *
+   */
+  bytes?: number;
+  /**
+   * `currentVersionId`'s own row count. Present only when `status` is `ready`.
+   */
+  rows?: number;
+  /**
+   * `currentVersionId`'s own gap count at its discovered cadence. Present only when `status` is `ready`.
+   */
+  gaps?: number;
+  /**
+   * `currentVersionId`'s own largest gap, in units of its discovered cadence step. Present only when `status` is `ready`.
+   */
+  largestGapSteps?: number;
+  /**
+   * A human-readable reason the most recent upload/import attempt failed. Present only
+   * when `status` is `failed`.
+   *
+   */
+  error?: string;
 };
 
 /**
@@ -1237,8 +1384,9 @@ export type DatasetWithLinks = Dataset & {
   /**
    * Which format `dataUrl` is actually in — check this rather than assuming it
    * matches how you uploaded it. `lastra` — our native columnar format — for a CSV (or
-   * gzip/zip of one) upload, always converted on ingest. `parquet` for a parquet
-   * upload, stored as-is today.
+   * gzip/zip of one) upload, always converted on ingest, or for a lastra upload,
+   * stored as-is (the value alone doesn't tell you which). `parquet` for a parquet
+   * upload, also stored as-is today.
    *
    */
   dataFormat?: "lastra" | "parquet";
@@ -1359,8 +1507,9 @@ export type DatasetVersion = {
   /**
    * Which format `dataUrl` is actually in — check this rather than assuming it matches
    * how you uploaded it. `lastra` — our native columnar format — for a CSV (or gzip/zip
-   * of one) upload, always converted on ingest. `parquet` for a parquet upload, stored
-   * as-is today.
+   * of one) upload, always converted on ingest, or for a lastra upload, stored as-is
+   * (the value alone doesn't tell you which). `parquet` for a parquet upload, also
+   * stored as-is today.
    *
    */
   dataFormat?: "lastra" | "parquet";
@@ -1608,6 +1757,39 @@ export type AuthenticateResponses = {
 
 export type AuthenticateResponse =
   AuthenticateResponses[keyof AuthenticateResponses];
+
+export type GetAccountData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/account";
+};
+
+export type GetAccountResponses = {
+  /**
+   * Your account
+   */
+  200: Account;
+};
+
+export type GetAccountResponse = GetAccountResponses[keyof GetAccountResponses];
+
+export type GetAccountUsageData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/account/usage";
+};
+
+export type GetAccountUsageResponses = {
+  /**
+   * Your current usage
+   */
+  200: AccountUsage;
+};
+
+export type GetAccountUsageResponse =
+  GetAccountUsageResponses[keyof GetAccountUsageResponses];
 
 export type ListExchangesData = {
   body?: never;
@@ -2738,6 +2920,12 @@ export type FinalizeDatasetUploadErrors = {
    * The uploaded file exceeds your tier's size limit for a dataset.
    */
   413: ResponseError;
+  /**
+   * Your account's total storage limit (`GET /account`'s `maxTotalStorageBytes`) is
+   * reached or would be exceeded. Delete a dataset to free space, or upgrade.
+   *
+   */
+  429: ResponseError;
 };
 
 export type FinalizeDatasetUploadError =
@@ -2821,7 +3009,10 @@ export type ImportDatasetErrors = {
    */
   409: ResponseError;
   /**
-   * Your tier's dataset count limit is reached. Delete one, or upgrade.
+   * Your tier's dataset count limit is reached, or your account's total storage limit
+   * (`GET /account`'s `maxTotalStorageBytes`) is already reached. Delete a dataset to free
+   * a slot or space, or upgrade.
+   *
    */
   429: ResponseError;
 };

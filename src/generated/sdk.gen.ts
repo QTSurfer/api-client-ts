@@ -9,6 +9,10 @@ import type {
   AuthenticateData,
   AuthenticateResponse,
   AuthenticateError,
+  GetAccountData,
+  GetAccountResponse,
+  GetAccountUsageData,
+  GetAccountUsageResponse,
   ListExchangesData,
   ListExchangesResponse,
   ListInstrumentsData,
@@ -143,6 +147,60 @@ export const authenticate = <ThrowOnError extends boolean = false>(
       },
     ],
     url: "/auth/token",
+    ...options,
+  });
+};
+
+/**
+ * Get your account's identity and tier limits
+ * Your userId, current tier, and that tier's limits — no database call, safe to fetch on
+ * every page load. For live usage against these limits, see `_links.usage`
+ * (`GET /account/usage`).
+ *
+ */
+export const getAccount = <ThrowOnError extends boolean = false>(
+  options?: Options<GetAccountData, ThrowOnError>
+) => {
+  return (options?.client ?? _heyApiClient).get<
+    GetAccountResponse,
+    unknown,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/account",
+    ...options,
+  });
+};
+
+/**
+ * Get your live storage usage
+ * How much of your account's shared storage pool (`GET /account`'s `maxTotalStorageBytes`)
+ * you're currently using. Datasets, strategy-execution signals, and registered strategies
+ * all count against the same total — they compete for the same underlying storage, so
+ * there's one number to watch, not one per resource type. Not guaranteed real-time — a
+ * just-completed upload or strategy execution may take a short moment to be reflected here.
+ *
+ */
+export const getAccountUsage = <ThrowOnError extends boolean = false>(
+  options?: Options<GetAccountUsageData, ThrowOnError>
+) => {
+  return (options?.client ?? _heyApiClient).get<
+    GetAccountUsageResponse,
+    unknown,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/account/usage",
     ...options,
   });
 };
@@ -895,16 +953,21 @@ export const listDatasets = <ThrowOnError extends boolean = false>(
  * response. `instrument` must be a plain spot pair (`BASE/QUOTE`, exactly one `/`); derivative
  * forms (e.g. `BTC/USDT:USDT`) are rejected.
  *
- * **Upload format.** A CSV with a header row, or a parquet file with the same columns by
- * name. Required: `timestamp` (ISO-8601, or numeric epoch seconds/millis/micros — detected
- * from the first row, then enforced for every later row), `close`. Optional: `open`, `high`,
- * `low`, `volume`, `quoteVolume`, `bid`, `bidSize`, `ask`, `askSize`. Cadence and timestamp
- * unit are discovered from the data, not declared.
+ * **Upload format.** A CSV with a header row, a parquet file with the same columns by
+ * name, or a lastra file — our own native columnar format, the same one a dataset's
+ * `dataUrl` hands back by default, so a downloaded dataset can be handed to another user to
+ * upload with no conversion in between. For CSV/parquet, required: `timestamp` (ISO-8601, or
+ * numeric epoch seconds/millis/micros — detected from the first row, then enforced for every
+ * later row), `close`. Optional: `open`, `high`, `low`, `volume`, `quoteVolume`, `bid`,
+ * `bidSize`, `ask`, `askSize`. A lastra upload carries its own fixed column set instead and
+ * only needs a timestamp series and a close series present. Cadence and timestamp unit are
+ * discovered from the data, not declared, for all three.
  *
  * A CSV upload is converted to our native columnar format (`lastra`) for storage. A parquet
- * upload is stored as-is today. Either way, always check `dataFormat` on
+ * or lastra upload is stored as-is today. Either way, always check `dataFormat` on
  * `GET /datasets/{datasetId}` and `GET /datasets/{datasetId}/uploads/{uploadId}` for which
- * one `dataUrl` actually is, rather than assuming from how you uploaded it.
+ * one `dataUrl` actually is, rather than assuming from how you uploaded it (a converted CSV
+ * and an uploaded lastra file both report `dataFormat: "lastra"`).
  *
  * The bytes PUT to `upload.url` may be that file directly, gzipped (`.gz`), or zipped
  * (`.zip`, exactly one file inside — a dataset is one file regardless of how it travels).

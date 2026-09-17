@@ -163,6 +163,174 @@ export const HalLinkSchema = {
   },
 } as const;
 
+export const AccountSchema = {
+  type: "object",
+  description: `Your identity and tier limits. No database call behind this one — safe to fetch on every
+page load. Live usage against these limits is a separate resource, \`GET /account/usage\`,
+deliberately: usage changes on every upload/execution and costs a query to compute, this
+one doesn't.
+`,
+  required: [
+    "userId",
+    "tier",
+    "maxDatasets",
+    "maxDatasetBytes",
+    "maxTotalStorageBytes",
+    "_links",
+  ],
+  properties: {
+    userId: {
+      type: "string",
+      description: "Your account id — the JWT `sub` claim.",
+      example: "00000000-0000-0000-0000-000000000000",
+    },
+    tier: {
+      type: "string",
+      description: "Your current subscription tier.",
+      example: "free",
+    },
+    maxDatasets: {
+      type: "integer",
+      description: "Maximum number of active datasets your tier allows.",
+      example: 3,
+    },
+    maxDatasetBytes: {
+      type: "integer",
+      format: "int64",
+      description: "Maximum size, in bytes, of a single dataset version.",
+      example: 52428800,
+    },
+    maxTotalStorageBytes: {
+      type: "integer",
+      format: "int64",
+      description: `Maximum combined storage, in bytes, across every dataset, strategy-execution signal,
+and registered strategy on your account — one shared pool, not a separate cap per
+resource type, since they all compete for the same underlying storage. See \`GET
+/account/usage\`'s \`storageBytesUsed\` for your current usage against this number.
+`,
+      example: 104857600,
+    },
+    _links: {
+      $ref: "#/components/schemas/AccountLinks",
+    },
+  },
+} as const;
+
+export const AccountLinksSchema = {
+  description: "HAL `_links` for `GET /account`",
+  type: "object",
+  required: ["self", "usage"],
+  properties: {
+    self: {
+      allOf: [
+        {
+          $ref: "#/components/schemas/HalLink",
+        },
+      ],
+      description: "Link to this resource.",
+    },
+    usage: {
+      allOf: [
+        {
+          $ref: "#/components/schemas/HalLink",
+        },
+      ],
+      description: "Link to your live usage, `GET /account/usage`.",
+    },
+  },
+} as const;
+
+export const AccountUsageSchema = {
+  type: "object",
+  description: `Your live usage of the shared storage pool \`GET /account\`'s \`maxTotalStorageBytes\` caps.
+Not guaranteed real-time — a just-completed upload or strategy execution may take a short
+moment to be reflected here.
+`,
+  required: [
+    "datasetsUsed",
+    "datasetBytesUsed",
+    "signalsUsed",
+    "signalBytesUsed",
+    "strategiesUsed",
+    "strategyBytesUsed",
+    "storageBytesUsed",
+    "_links",
+  ],
+  properties: {
+    datasetsUsed: {
+      type: "integer",
+      description:
+        "Active datasets counted — the same set `GET /account`'s `maxDatasets` limits.",
+      example: 2,
+    },
+    datasetBytesUsed: {
+      type: "integer",
+      format: "int64",
+      description: "Combined bytes of every active dataset's current version.",
+      example: 15728640,
+    },
+    signalsUsed: {
+      type: "integer",
+      description: "Recorded strategy-execution signal uploads.",
+      example: 1,
+    },
+    signalBytesUsed: {
+      type: "integer",
+      format: "int64",
+      description: "Combined bytes of every recorded signal upload.",
+      example: 524288,
+    },
+    strategiesUsed: {
+      type: "integer",
+      description: "Registered strategies (see `GET /strategies`).",
+      example: 4,
+    },
+    strategyBytesUsed: {
+      type: "integer",
+      format: "int64",
+      description: `Combined bytes of each registered strategy's source plus its latest compiled
+bytecode. Superseded (non-latest) compilations aren't counted.
+`,
+      example: 40960,
+    },
+    storageBytesUsed: {
+      type: "integer",
+      format: "int64",
+      description: `\`datasetBytesUsed + signalBytesUsed + strategyBytesUsed\` — the number checked
+against \`GET /account\`'s \`maxTotalStorageBytes\`.
+`,
+      example: 16293888,
+    },
+    _links: {
+      $ref: "#/components/schemas/AccountUsageLinks",
+    },
+  },
+} as const;
+
+export const AccountUsageLinksSchema = {
+  description: "HAL `_links` for `GET /account/usage`",
+  type: "object",
+  required: ["self", "account"],
+  properties: {
+    self: {
+      allOf: [
+        {
+          $ref: "#/components/schemas/HalLink",
+        },
+      ],
+      description: "Link to this resource.",
+    },
+    account: {
+      allOf: [
+        {
+          $ref: "#/components/schemas/HalLink",
+        },
+      ],
+      description: "Link to your tier limits, `GET /account`.",
+    },
+  },
+} as const;
+
 export const InstrumentDetailSchema = {
   description:
     "Exchange instrument with per-data-type coverage and market info",
@@ -369,7 +537,7 @@ export const JobStateSchema = {
       description:
         "Identifier for the job's execution context. Its current shape is a colon-delimited string encoding the data source type, an internal user id, the exchange, the job id, and the instrument — but that structure is not a committed contract and may change without notice. Treat it as an opaque token: store and pass it back, don't parse it.",
       example:
-        "jctx:ticker:76b90203-03c2-46f6-b366-9944f167e818:binance:5ikyamio8b3v9wcnfxztzg:btc/usdt:0vicnz3thzhrqvfczks1pu",
+        "jctx:ticker:00000000-0000-0000-0000-000000000000:binance:5ikyamio8b3v9wcnfxztzg:btc/usdt:0vicnz3thzhrqvfczks1pu",
     },
     status: {
       type: "string",
@@ -1964,11 +2132,12 @@ export const DatasetSchema = {
   description: `A dataset's own metadata — not its data. \`currentVersionId\` is what a prepare against
 \`exchangeId: user\` reads by default; see \`DatasetVersion\` for what a version carries.
 
-\`from\`/\`to\`/\`cadence\` mirror that current version's own discovered range and cadence, so
-you don't need a second call to \`GET /datasets/{datasetId}/uploads/{uploadId}\` just to see
-what a dataset covers. Absent until a version exists.
+\`from\`/\`to\`/\`cadence\`/\`timestampUnit\`/\`bytes\`/\`rows\`/\`gaps\`/\`largestGapSteps\` mirror that
+current version's own discovered range, cadence, timestamp unit and metrics, so you don't
+need a second call to \`GET /datasets/{datasetId}/uploads/{uploadId}\` just to see what a
+dataset covers.
 `,
-  required: ["datasetId", "name", "type", "instrument", "createdAt"],
+  required: ["datasetId", "name", "type", "instrument", "createdAt", "status"],
   properties: {
     datasetId: {
       type: "string",
@@ -2035,6 +2204,56 @@ a version exists.
 `,
       example: "1m",
     },
+    timestampUnit: {
+      type: "string",
+      enum: ["iso", "s", "ms", "us"],
+      description: `\`currentVersionId\`'s own timestamp unit (see \`DatasetVersion.timestampUnit\`) — decode
+the \`timestamp\` column of \`dataUrl\`'s file accordingly. Present only when \`status\` is
+\`ready\`.
+`,
+      example: "iso",
+    },
+    status: {
+      type: "string",
+      enum: ["ready", "failed", "pending"],
+      description: `* \`ready\` — \`currentVersionId\` is set; \`from\`/\`to\`/\`cadence\`/\`bytes\`/\`rows\`/\`gaps\`/
+  \`largestGapSteps\` describe it.
+* \`failed\` — the most recent upload/import attempt failed. \`currentVersionId\` and the
+  fields above are absent — there is nothing to read yet. See \`error\`.
+* \`pending\` — nothing has ever been attempted (just created, or an upload was never
+  finalized).
+`,
+      example: "ready",
+    },
+    bytes: {
+      type: "integer",
+      description: `Size of \`currentVersionId\`'s own stored file. Present only when \`status\` is \`ready\` —
+see \`DatasetVersion.bytes\` for what it measures exactly.
+`,
+      example: 4831022,
+    },
+    rows: {
+      type: "integer",
+      description: `\`currentVersionId\`'s own row count. Present only when \`status\` is \`ready\`.`,
+      example: 86400,
+    },
+    gaps: {
+      type: "integer",
+      description: `\`currentVersionId\`'s own gap count at its discovered cadence. Present only when \`status\` is \`ready\`.`,
+      example: 0,
+    },
+    largestGapSteps: {
+      type: "integer",
+      description: `\`currentVersionId\`'s own largest gap, in units of its discovered cadence step. Present only when \`status\` is \`ready\`.`,
+      example: 0,
+    },
+    error: {
+      type: "string",
+      description: `A human-readable reason the most recent upload/import attempt failed. Present only
+when \`status\` is \`failed\`.
+`,
+      example: "line 3: column 'close' is not a number: not-a-number",
+    },
   },
 } as const;
 
@@ -2064,8 +2283,9 @@ session, not in one shot like a browser upload.
           enum: ["lastra", "parquet"],
           description: `Which format \`dataUrl\` is actually in — check this rather than assuming it
 matches how you uploaded it. \`lastra\` — our native columnar format — for a CSV (or
-gzip/zip of one) upload, always converted on ingest. \`parquet\` for a parquet
-upload, stored as-is today.
+gzip/zip of one) upload, always converted on ingest, or for a lastra upload,
+stored as-is (the value alone doesn't tell you which). \`parquet\` for a parquet
+upload, also stored as-is today.
 `,
           example: "lastra",
         },
@@ -2244,8 +2464,9 @@ an extended viewing session, not in one shot like a browser upload.
       enum: ["lastra", "parquet"],
       description: `Which format \`dataUrl\` is actually in — check this rather than assuming it matches
 how you uploaded it. \`lastra\` — our native columnar format — for a CSV (or gzip/zip
-of one) upload, always converted on ingest. \`parquet\` for a parquet upload, stored
-as-is today.
+of one) upload, always converted on ingest, or for a lastra upload, stored as-is
+(the value alone doesn't tell you which). \`parquet\` for a parquet upload, also
+stored as-is today.
 `,
       example: "lastra",
     },
