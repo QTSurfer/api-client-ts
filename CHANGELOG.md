@@ -1,5 +1,11 @@
 # @qtsurfer/api-client
 
+## 0.18.0
+
+### Minor Changes
+
+- Add the `listLive` endpoint and its typed live-run response models from OpenAPI 0.126.2.
+
 ## 0.17.0
 
 ### Minor Changes

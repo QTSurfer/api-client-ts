@@ -3017,6 +3017,91 @@ export const LiveRunCompactSchema = {
   },
 } as const;
 
+export const LiveRunSummarySchema = {
+  type: "object",
+  required: [
+    "strategyId",
+    "runId",
+    "visibility",
+    "stage",
+    "state",
+    "desired",
+    "sources",
+    "createdAtMs",
+    "startedAtMs",
+  ],
+  description:
+    "A run as it appears in `GET /live` — one of your own, narrower than `LiveRun` (no `params`, `paramsVersion`, `relay`, or `gate`), since listing stays cheap regardless of how many runs you have. Check a specific run's full state with `GET /strategy/{strategyId}/live`.",
+  properties: {
+    strategyId: {
+      $ref: "#/components/schemas/strategyId",
+    },
+    runId: {
+      type: "string",
+      description:
+        "This run's own id — its canonical identity for `PATCH`/`PUT .../params` and for `GET /live/public`.",
+    },
+    name: {
+      type: "string",
+    },
+    description: {
+      type: "string",
+    },
+    visibility: {
+      type: "string",
+      enum: ["private", "public"],
+    },
+    stage: {
+      type: "string",
+      enum: ["SANDBOX", "LIVE"],
+      description:
+        "A new run always starts `SANDBOX` — a trial run compared against a second execution for agreement — and moves to `LIVE` once it passes.",
+    },
+    state: {
+      type: "string",
+      description: `\`STARTING\` until first observed running; otherwise the runner's own reported state (e.g. \`RUNNING\`).`,
+    },
+    desired: {
+      type: "string",
+      enum: ["RUNNING", "STOPPED"],
+      description:
+        "What you last asked for. `state` can lag this briefly after `DELETE`.",
+    },
+    sources: {
+      type: "array",
+      items: {
+        $ref: "#/components/schemas/LiveSource",
+      },
+    },
+    createdAtMs: {
+      type: "integer",
+      format: "int64",
+      description: "Epoch milliseconds this run was started.",
+    },
+    startedAtMs: {
+      type: "integer",
+      format: "int64",
+      description: "Epoch milliseconds.",
+    },
+  },
+} as const;
+
+export const LiveListResponseSchema = {
+  type: "object",
+  required: ["runs"],
+  properties: {
+    runs: {
+      type: "array",
+      items: {
+        $ref: "#/components/schemas/LiveRunSummary",
+      },
+    },
+    _links: {
+      $ref: "#/components/schemas/PublicLiveListLinks",
+    },
+  },
+} as const;
+
 export const PublicLiveRunSchema = {
   type: "object",
   required: ["runId", "sources", "state", "createdAtMs"],

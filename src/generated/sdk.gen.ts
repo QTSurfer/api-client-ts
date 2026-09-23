@@ -109,6 +109,9 @@ import type {
   StartLiveData,
   StartLiveResponse,
   StartLiveError,
+  ListLiveData,
+  ListLiveResponse,
+  ListLiveError,
   ListPublicLiveData,
   ListPublicLiveResponse,
   ListPublicLiveError,
@@ -1360,6 +1363,32 @@ export const startLive = <ThrowOnError extends boolean = false>(
       "Content-Type": "application/json",
       ...options?.headers,
     },
+  });
+};
+
+/**
+ * List your own live runs
+ * Every run you have started, in any `stage`, `desired` state, or `visibility` — newest
+ * first. Unlike `GET /live/public`, this is not filtered to `RUNNING` public runs: it is
+ * the complete list of runs you own, including `sandbox` trials and stopped ones.
+ *
+ */
+export const listLive = <ThrowOnError extends boolean = false>(
+  options?: Options<ListLiveData, ThrowOnError>
+) => {
+  return (options?.client ?? _heyApiClient).get<
+    ListLiveResponse,
+    ListLiveError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/live",
+    ...options,
   });
 };
 

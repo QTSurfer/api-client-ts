@@ -1864,6 +1864,46 @@ export type LiveRunCompact = {
 };
 
 /**
+ * A run as it appears in `GET /live` — one of your own, narrower than `LiveRun` (no `params`, `paramsVersion`, `relay`, or `gate`), since listing stays cheap regardless of how many runs you have. Check a specific run's full state with `GET /strategy/{strategyId}/live`.
+ */
+export type LiveRunSummary = {
+  strategyId: StrategyId;
+  /**
+   * This run's own id — its canonical identity for `PATCH`/`PUT .../params` and for `GET /live/public`.
+   */
+  runId: string;
+  name?: string;
+  description?: string;
+  visibility: "private" | "public";
+  /**
+   * A new run always starts `SANDBOX` — a trial run compared against a second execution for agreement — and moves to `LIVE` once it passes.
+   */
+  stage: "SANDBOX" | "LIVE";
+  /**
+   * `STARTING` until first observed running; otherwise the runner's own reported state (e.g. `RUNNING`).
+   */
+  state: string;
+  /**
+   * What you last asked for. `state` can lag this briefly after `DELETE`.
+   */
+  desired: "RUNNING" | "STOPPED";
+  sources: Array<LiveSource>;
+  /**
+   * Epoch milliseconds this run was started.
+   */
+  createdAtMs: number;
+  /**
+   * Epoch milliseconds.
+   */
+  startedAtMs: number;
+};
+
+export type LiveListResponse = {
+  runs: Array<LiveRunSummary>;
+  _links?: PublicLiveListLinks;
+};
+
+/**
  * A run as it appears in `GET /live/public` — never reveals who owns it or which strategy it runs.
  */
 export type PublicLiveRun = {
@@ -3441,6 +3481,40 @@ export type StartLiveResponses = {
 };
 
 export type StartLiveResponse = StartLiveResponses[keyof StartLiveResponses];
+
+export type ListLiveData = {
+  body?: never;
+  path?: never;
+  query?: {
+    /**
+     * The `runId` from a previous page's `_links.next.href`. Omit for the first page.
+     */
+    cursor?: string;
+    /**
+     * Page size. Larger values are capped, not rejected.
+     */
+    limit?: number;
+  };
+  url: "/live";
+};
+
+export type ListLiveErrors = {
+  /**
+   * An invalid `cursor` or `limit`.
+   */
+  400: ResponseError;
+};
+
+export type ListLiveError = ListLiveErrors[keyof ListLiveErrors];
+
+export type ListLiveResponses = {
+  /**
+   * A page of your own runs
+   */
+  200: LiveListResponse;
+};
+
+export type ListLiveResponse = ListLiveResponses[keyof ListLiveResponses];
 
 export type ListPublicLiveData = {
   body?: never;
