@@ -100,6 +100,29 @@ import type {
   GetDatasetImportData,
   GetDatasetImportResponse,
   GetDatasetImportError,
+  StopLiveData,
+  StopLiveResponse,
+  StopLiveError,
+  GetLiveData,
+  GetLiveResponse,
+  GetLiveError,
+  StartLiveData,
+  StartLiveResponse,
+  StartLiveError,
+  ListPublicLiveData,
+  ListPublicLiveResponse,
+  ListPublicLiveError,
+  UpdateLiveData,
+  UpdateLiveResponse,
+  UpdateLiveError,
+  UpdateLiveParamsData,
+  UpdateLiveParamsResponse,
+  UpdateLiveParamsError,
+  GetLiveRunSignalsData,
+  GetLiveRunSignalsResponse,
+  GetLiveRunSignalsError,
+  MintLiveConnectionTokenData,
+  MintLiveConnectionTokenResponse,
 } from "./types.gen";
 import { client as _heyApiClient } from "./client.gen";
 
@@ -366,22 +389,35 @@ export const listStrategies = <ThrowOnError extends boolean = false>(
  * Compile and register a strategy
  * Compiles raw strategy source and registers it, returning its `strategyId`.
  *
- * **This answers one question: is the source valid Java.** It compiles, registers, and hands
+ * The source is either **Java** — a class extending a strategy base class — or **QTScript**
+ * (beta), a compact strategy language whose braced bodies are plain Java. QTScript source
+ * begins with the `strategy` keyword — whitespace and comments (`//` or `* *`) before it
+ * are ignored — and that is how the two are told apart: there is no separate endpoint and
+ * no header to set. Once registered, a strategy is used the same way
+ * whichever language it was written in.
+ *
+ * **This answers one question: is the source valid.** It compiles, registers, and hands
  * back the id — nothing more. Whether the class can actually run is
  * `POST /strategy/{strategyId}/validate`, and everything known about a strategy, validation
  * included, is read from `GET /strategy/{strategyId}`. One place to ask, so there is no second
  * answer to keep in step.
  *
- * The `strategyId` is derived from what the code *means*, not from how it is written. Adding a
- * comment, inserting a blank line, re-indenting, reordering imports, or moving a method around
- * all return the **same** id — you have not created a second strategy. Renaming a variable,
- * changing an identifier's case, reordering fields, or reordering statements inside a method
- * return a **different** one.
+ * For **Java**, the `strategyId` is derived from what the code *means*, not from how it is
+ * written. Adding a comment, inserting a blank line, re-indenting, reordering imports, or
+ * moving a method around all return the **same** id — you have not created a second strategy.
+ * Renaming a variable, changing an identifier's case, reordering fields, or reordering
+ * statements inside a method return a **different** one.
+ *
+ * For **QTScript**, the id is derived from the text, because indentation is part of its
+ * grammar. Only differences that cannot change the strategy are ignored: a byte-order mark, the
+ * style of line endings, whitespace at the end of a line, and blank lines before the first and
+ * after the last line. Anything else — a comment, the indentation, a blank line in between —
+ * returns a **different** id.
  *
  * Two rules follow, and they are worth designing around:
  *
- * - re-submitting a strategy you have only reformatted is free, and gives you back the id you
- * already had, along with any validation already recorded against it;
+ * - re-submitting a Java strategy you have only reformatted is free, and gives you back the id
+ * you already had, along with any validation already recorded against it;
  * - the id says nothing about *behaviour*. Two sources that compute the same thing by
  * different means are two strategies, because deciding otherwise would mean deciding program
  * equivalence.
@@ -547,6 +583,10 @@ export const getStrategyCode = <ThrowOnError extends boolean = false>(
  * The same params always return the same `jobId` (idempotent). Repeated calls with identical
  * params do not enqueue duplicate work — they reuse the existing job.
  *
+ * Every source in `DataSourceType` can be prepared, but not every one can then be run: `funding`
+ * data can be prepared and is rejected by `execute` and `executeSweep`. A `kline` prepare takes
+ * the bar width from `cadence` — see `PrepareRequest`.
+ *
  * **`exchangeId: user` is reserved for your own uploaded data.** Instead of a managed
  * exchange, it prepares from a dataset you created via `POST /datasets` (see the **Dataset**
  * endpoints) — send `datasetId` in place of `instrument`. See `PrepareRequest` below for the
@@ -609,6 +649,10 @@ export const getPrepareStatus = <ThrowOnError extends boolean = false>(
  * Runs a parameter matrix over the single immutable dataset identified by `requestId`.
  * The backend expands and executes the matrix internally; clients poll the returned
  * `sweepId` for incremental results.
+ *
+ * `type` must be `ticker` or `kline`; a `kline` sweep, walk-forward included, runs over bars of
+ * the cadence the request was prepared at. `funding` can be prepared but not swept yet: it is
+ * rejected with `400` before anything is queued.
  *
  * Supplying `walkForward` runs the sweep in a different mode entirely. Instead of scoring
  * every parameter vector once over the whole range, the data is split into F sequential
@@ -806,6 +850,11 @@ export const getSweepRunEquityCurve = <ThrowOnError extends boolean = false>(
  *
  * Returns immediately with a `jobId`; poll `GET /backtest/{exchangeId}/{type}/execute/{jobId}`
  * for the result.
+ *
+ * `type` must be a source that can be executed: `ticker` or `kline`. A `kline` strategy is fed
+ * bars of the cadence its `prepareJobId` was prepared at — chosen by you when preparing, not by
+ * the strategy. `funding` can be prepared but not executed yet: it is rejected with `400`
+ * before anything is queued.
  *
  * Optionally takes `params`: strategy properties for this one run, applied without
  * recompiling. This is how a sweep leaderboard winner gets re-run for its `equityCurve` —
@@ -1206,6 +1255,275 @@ export const getDatasetImport = <ThrowOnError extends boolean = false>(
       },
     ],
     url: "/datasets/{datasetId}/imports/{importId}",
+    ...options,
+  });
+};
+
+/**
+ * Stop this strategy's live run
+ * Requests a stop. The run winds down at its own next check-in rather than instantly —
+ * poll `GET`/`PATCH` `.../live` and expect `state` to remain `RUNNING` for a short window
+ * after `desired` flips to `STOPPED`. Calling this again on an already-stopped run is not an
+ * error; it returns the same (unchanged) state.
+ *
+ */
+export const stopLive = <ThrowOnError extends boolean = false>(
+  options: Options<StopLiveData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).delete<
+    StopLiveResponse,
+    StopLiveError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/strategy/{strategyId}/live",
+    ...options,
+  });
+};
+
+/**
+ * Get this strategy's current (or most recent) live run
+ * The run you last started for this strategy — its most complete state, including `params`
+ * and the promotion `gate` once the sandbox trial has one to report. Returns the run's last
+ * known state even after it has stopped; this endpoint never disappears history.
+ *
+ */
+export const getLive = <ThrowOnError extends boolean = false>(
+  options: Options<GetLiveData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).get<
+    GetLiveResponse,
+    GetLiveError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/strategy/{strategyId}/live",
+    ...options,
+  });
+};
+
+/**
+ * Start a strategy on a live market feed
+ * Starts your strategy against a live market feed. A new run always begins in the **sandbox**
+ * stage — a short trial that compares an independent second execution against the first for
+ * agreement — before it is eligible for promotion to the live stage where it actually
+ * publishes signals other systems can act on. Poll `GET /strategy/{strategyId}/live` (or
+ * `PATCH`/`DELETE` `/live/{runId}` once you have the `runId`) to watch `stage` move from
+ * `SANDBOX` to `LIVE`.
+ *
+ * Only one run per strategy at a time — starting again while one is already running is `409`;
+ * stop the current one first.
+ *
+ * `sources` takes exactly one entry today (multi-source strategies are not supported yet).
+ * `type` is `ticker` or `kline`; anything else is rejected. Both connect to the lightest
+ * (fastest) cadence available for the exchange — today that is 1 tick/second on every
+ * supported exchange; choosing among several cadences is not offered yet.
+ *
+ * `params` is passed straight through to the strategy at start — the same free-form object
+ * `POST /strategy/{strategyId}/validate` and the backtest endpoints already accept. To change
+ * a parameter **while the run is live**, use `PUT /live/{runId}/params` instead; this endpoint
+ * only sets the values a run starts with.
+ *
+ * Consuming a run's own output — its signals, and updating its parameters over a live
+ * connection instead of polling — is a WebSocket protocol on top of these REST endpoints; see
+ * the "Live execution" guide linked from this tag's description for the full flow (minting a
+ * connection token, the channel and RPC method).
+ *
+ */
+export const startLive = <ThrowOnError extends boolean = false>(
+  options: Options<StartLiveData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).post<
+    StartLiveResponse,
+    StartLiveError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/strategy/{strategyId}/live",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  });
+};
+
+/**
+ * Browse public live runs
+ * Every run whose owner marked it `public` and is currently live and running — anyone's,
+ * yours included, and listed without revealing who owns it. Most recently started first.
+ *
+ * This is the only `Live Execution` endpoint that needs no `Authorization` header.
+ *
+ */
+export const listPublicLive = <ThrowOnError extends boolean = false>(
+  options?: Options<ListPublicLiveData, ThrowOnError>
+) => {
+  return (options?.client ?? _heyApiClient).get<
+    ListPublicLiveResponse,
+    ListPublicLiveError,
+    ThrowOnError
+  >({
+    url: "/live/public",
+    ...options,
+  });
+};
+
+/**
+ * Change a run's visibility, name, or description
+ * Owner only, addressed by `runId` directly rather than through its strategy — this is a
+ * run's own canonical identity, independent of which strategy started it.
+ *
+ * Setting `visibility` from `public` back to `private` also evicts anyone currently connected
+ * to the run's live signal channel who is not its owner — best-effort; the change to this
+ * record is not rolled back if that eviction fails.
+ *
+ */
+export const updateLive = <ThrowOnError extends boolean = false>(
+  options: Options<UpdateLiveData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).patch<
+    UpdateLiveResponse,
+    UpdateLiveError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/live/{runId}",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  });
+};
+
+/**
+ * Change a running strategy's parameters
+ * Updates one or more parameters of a run **while it stays live** — unlike `params` on
+ * `POST /strategy/{strategyId}/live`, which only sets the starting values. Owner only.
+ *
+ * Every key in `params` must be one your strategy declares (see `declaredProperties` on
+ * `POST /strategy`) as of the compilation this run is executing — recompiling the strategy
+ * later never changes what an already-running instance accepts; start a new run for that.
+ *
+ * The change does not take effect the instant this call returns: `effectiveAtMs` is the
+ * earliest moment it is guaranteed to apply, a few seconds out, so both the REST and
+ * WebSocket paths to this same update (see the "Live execution" guide) land on the exact same
+ * value at the exact same moment.
+ *
+ */
+export const updateLiveParams = <ThrowOnError extends boolean = false>(
+  options: Options<UpdateLiveParamsData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).put<
+    UpdateLiveParamsResponse,
+    UpdateLiveParamsError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/live/{runId}/params",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  });
+};
+
+/**
+ * Read a run's signals
+ * Returns one page of the signals a run has already produced, newest-last, optionally from a
+ * given time and narrowed to one or more instruments.
+ *
+ * This is the counterpart to the real-time WebSocket channel: that channel only carries what
+ * happens while you are connected, and only for a run that asked for `relay`. A run's signals
+ * are recorded either way, so this endpoint serves them whether or not `relay` was ever on,
+ * in both the `sandbox` and `live` stages — use it to catch up after a disconnect, to read a
+ * run you never relayed, or to page back over what has already happened.
+ *
+ * **The available window moves.** Signals are kept for a limited span, and the oldest are
+ * continuously discarded as new ones arrive, so how far back you can read is not a fixed
+ * number of hours: on a busy run it can be a good deal shorter. Every response carries
+ * `availableSinceMs`, the oldest moment that can still be answered for. Asking for a
+ * `sinceMs` older than that is not an error — you get everything from `availableSinceMs`
+ * onwards, and that field tells you it happened.
+ *
+ * **A cursor can expire, and on a busy run it expires quickly.** If the position a cursor
+ * points at has since been discarded, the next page answers `410` rather than silently
+ * serving a shortened page that looks complete. Treat that as a normal outcome: read
+ * `availableSinceMs` from the error and start again from there.
+ *
+ * Readable by the run's owner, and by anyone if the run is `public` — the same rule the
+ * signal channel applies to a subscription.
+ *
+ */
+export const getLiveRunSignals = <ThrowOnError extends boolean = false>(
+  options: Options<GetLiveRunSignalsData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).get<
+    GetLiveRunSignalsResponse,
+    GetLiveRunSignalsError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/live/{runId}/signals",
+    ...options,
+  });
+};
+
+/**
+ * Mint a WebSocket connection token
+ * Mints a short-lived token for the WebSocket connection used to receive a run's signals in
+ * real time and to call `live.params` (the WebSocket form of `PUT /live/{runId}/params`) —
+ * see the "Live execution" guide linked from this tag's description for the full protocol.
+ * Carries no request body.
+ *
+ */
+export const mintLiveConnectionToken = <ThrowOnError extends boolean = false>(
+  options?: Options<MintLiveConnectionTokenData, ThrowOnError>
+) => {
+  return (options?.client ?? _heyApiClient).post<
+    MintLiveConnectionTokenResponse,
+    unknown,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/live/token",
     ...options,
   });
 };

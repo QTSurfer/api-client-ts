@@ -1,5 +1,11 @@
 # @qtsurfer/api-client
 
+## 0.17.0
+
+### Minor Changes
+
+- Add live execution, account, and signal API contracts.
+
 ## 0.16.0
 
 ### Minor Changes

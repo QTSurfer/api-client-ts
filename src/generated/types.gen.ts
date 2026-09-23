@@ -287,8 +287,17 @@ export type Exchange = {
 
 /**
  * Managed exchange data sources available for backtesting.
+ *
+ * * `ticker` — trades. Can be prepared, executed and swept.
+ * * `kline` — aggregated bars (candlesticks). Can be prepared, executed and swept. A run reads
+ * bars of the `cadence` the data was prepared at: you choose the bar width when you prepare,
+ * and the strategy does not fix it. See `PrepareRequest.cadence` for the accepted values.
+ * * `funding` — funding rates. Can be **prepared but not executed or swept yet**: a `funding`
+ * request to `execute` or `executeSweep` is rejected with `400` before anything is queued,
+ * and the message names the sources that can be run.
+ *
  */
-export type DataSourceType = "ticker";
+export type DataSourceType = "ticker" | "kline" | "funding";
 
 /**
  * Two shapes, chosen by the `exchangeId` path segment. Against a managed exchange,
@@ -338,9 +347,14 @@ export type PrepareRequest = {
    * than the source, or not an exact multiple of it, returns `400`. What's accepted, and
    * what omitting it means, depends on the source:
    *
-   * * Managed exchange — one of `1s`, `5s`, `1m`, `3m`, `5m`, `15m`, `30m`, `1h`, `2h`,
-   * `4h`, `8h`, `12h`, `1d`, `1w`, `1q`; any other label returns `400`. Omitted = `1s`,
-   * the publisher's native cadence.
+   * * Managed exchange, `ticker` or `funding` — one of `1s`, `5s`, `1m`, `3m`, `5m`, `15m`,
+   * `30m`, `1h`, `2h`, `4h`, `8h`, `12h`, `1d`, `1w`, `1q`; any other label returns `400`.
+   * Omitted = `1s`, the publisher's native cadence.
+   * * Managed exchange, `kline` — one of `1s`, `1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1d`;
+   * any other label, including `5s`, `3m` and `8h`, returns `400` and names the accepted
+   * ones. Omitted = `1s`. This is the width of the bars a run reads: it is chosen here,
+   * once, and the same strategy can be run at several cadences by preparing the range at
+   * each.
    * * Dataset (`exchangeId: user`) — omitted = the dataset version's own discovered
    * `cadence` (see `DatasetVersion.cadence`), served as-is. Any cadence equal to or
    * coarser than it and an exact multiple of it is accepted, including ones outside the
@@ -1092,8 +1106,9 @@ export type EquityCurveResult = {
 
 /**
  * Unique identifier for a compiled strategy, derived from the source itself: the same code
- * always yields the same id, for every caller, whatever its formatting. See
- * `POST /strategy` for exactly which rewrites preserve it and which do not.
+ * always yields the same id, for every caller. How much formatting the id ignores depends on
+ * the language — see `POST /strategy` for exactly which rewrites preserve it and which do
+ * not.
  *
  */
 export type StrategyId = string;
@@ -1728,6 +1743,255 @@ export type AuthTokenError = {
   message: string;
 };
 
+/**
+ * One market feed a live run consumes. Exactly one entry per run today.
+ */
+export type LiveSource = {
+  /**
+   * Venue category. `cx` (centralized exchange) is the only one live runs support today.
+   */
+  venueType: string;
+  exchange: string;
+  segment: string;
+  /**
+   * Both `ticker` and `kline` connect to the lightest (fastest) cadence available for the exchange — today, 1 tick/second on every supported exchange. Choosing a specific cadence is not offered yet.
+   */
+  type: "ticker" | "kline";
+  /**
+   * Instrument symbols, or `["*"]` for every instrument the exchange/segment offers (tier-gated).
+   */
+  instruments: Array<string>;
+};
+
+export type StartLiveRequest = {
+  sources: [LiveSource];
+  /**
+   * Strategy parameters to start with. Opaque key/value pairs — see this strategy's own `declaredProperties` (from `POST /strategy`) for the keys it accepts.
+   */
+  params?: {
+    [key: string]: unknown;
+  };
+  /**
+   * A `public` run appears in `GET /live/public` and its signal channel accepts subscriptions from anyone, not only you.
+   */
+  visibility?: "private" | "public";
+  /**
+   * Request that this run's signals be relayed over its WebSocket channel once it reaches the `live` stage — see the "Live execution" guide. Has no effect while the run is still in the `sandbox` stage, regardless of this value.
+   */
+  relay?: boolean;
+  name?: string;
+  description?: string;
+};
+
+export type UpdateLiveRequest = {
+  visibility?: "private" | "public";
+  name?: string;
+  description?: string;
+};
+
+export type UpdateLiveParamsRequest = {
+  /**
+   * Must be non-empty; every key must be a property your strategy declares.
+   */
+  params: {
+    [key: string]: unknown;
+  };
+};
+
+/**
+ * A live run's full state, as returned by starting, reading, or stopping it through its strategy.
+ */
+export type LiveRun = {
+  strategyId: StrategyId;
+  /**
+   * This run's own id — its canonical identity for `PATCH`/`PUT .../params` and for `GET /live/public`.
+   */
+  runId: string;
+  name?: string;
+  description?: string;
+  visibility: "private" | "public";
+  /**
+   * A new run always starts `SANDBOX` — a trial run compared against a second execution for agreement — and moves to `LIVE` once it passes.
+   */
+  stage: "SANDBOX" | "LIVE";
+  /**
+   * `STARTING` until first observed running; otherwise the runner's own reported state (e.g. `RUNNING`).
+   */
+  state: string;
+  /**
+   * What you last asked for. `state` can lag this briefly after `DELETE`.
+   */
+  desired: "RUNNING" | "STOPPED";
+  /**
+   * Present only when the run stopped because it exceeded its resource allowance.
+   */
+  reason?: string;
+  sources: Array<LiveSource>;
+  params: {
+    [key: string]: unknown;
+  };
+  /**
+   * Increments on every accepted `PUT .../params` call, including one that resends the current values.
+   */
+  paramsVersion: number;
+  /**
+   * Whether this run's signals are being relayed over the WebSocket channel described in the "Live execution" guide, right now. This is the effective value — `false` on a `sandbox` run regardless of what was requested at start; matches the requested value once `stage` reaches `live`.
+   */
+  relay: boolean;
+  /**
+   * Epoch milliseconds.
+   */
+  startedAtMs: number;
+  /**
+   * The sandbox trial's promotion verdict, once one exists. Shape is not yet stabilized as public API — treat as opaque diagnostics.
+   */
+  gate?: {
+    [key: string]: unknown;
+  };
+};
+
+/**
+ * A run's state as returned by `PATCH /live/{runId}` — narrower than `LiveRun` (no `strategyId`, `params`, or `desired`), since this endpoint is addressed by `runId` alone.
+ */
+export type LiveRunCompact = {
+  runId: string;
+  name?: string;
+  description?: string;
+  visibility: "private" | "public";
+  stage: "SANDBOX" | "LIVE";
+  state: string;
+  sources: Array<LiveSource>;
+};
+
+/**
+ * A run as it appears in `GET /live/public` — never reveals who owns it or which strategy it runs.
+ */
+export type PublicLiveRun = {
+  runId: string;
+  name?: string;
+  description?: string;
+  sources: Array<LiveSource>;
+  state: string;
+  createdAtMs: number;
+};
+
+export type PublicLiveListResponse = {
+  runs: Array<PublicLiveRun>;
+  _links?: PublicLiveListLinks;
+};
+
+/**
+ * Present only when another page exists.
+ */
+export type PublicLiveListLinks = {
+  next?: PublicLiveNextLink;
+};
+
+export type PublicLiveNextLink = {
+  href?: string;
+};
+
+/**
+ * One page of a run's recorded signals, oldest first.
+ */
+export type LiveSignalPage = {
+  signals: Array<LiveSignal>;
+  /**
+   * The oldest moment this run's signals can still be read from. Absent when the run has produced nothing yet. It moves forward over time as older signals are discarded, so a `sinceMs` earlier than this is served from here instead.
+   */
+  availableSinceMs?: number;
+  _links?: PublicLiveListLinks;
+};
+
+/**
+ * One signal, in the same shape the real-time signal channel delivers.
+ */
+export type LiveSignal = {
+  /**
+   * Envelope schema version.
+   */
+  v: number;
+  /**
+   * Stable id for this exact signal — dedupe on it across reconnects or overlapping reads.
+   */
+  signalId: string;
+  runId: string;
+  /**
+   * The stage the run was in when this signal was produced.
+   */
+  stage: "sandbox" | "live";
+  /**
+   * The parameter set in force when this signal was produced.
+   */
+  paramsVersion?: number;
+  type: "hint" | "info" | "marker" | "command";
+  /**
+   * `BUY`/`SELL` for a `hint`, the command name for a `command`, absent otherwise.
+   */
+  kind?: string | null;
+  /**
+   * Market time the signal was produced.
+   */
+  eventTsMs: number;
+  /**
+   * Time it was published — always at or after `eventTsMs`.
+   */
+  emittedAtMs: number;
+  instrument: LiveSignalInstrument;
+  order?: LiveSignalOrder;
+  /**
+   * The signal's own free-form payload.
+   */
+  data?: {
+    [key: string]: unknown;
+  };
+  /**
+   * `true` only for a signal republished to fill a gap in the record.
+   */
+  regenerated?: boolean;
+  /**
+   * Content hash, for checking that two independent deliveries of the same signal agree.
+   */
+  digest: string;
+};
+
+export type LiveSignalInstrument = {
+  exchange?: string;
+  segment?: string;
+  /**
+   * Slashed form, e.g. `BTC/USDT`.
+   */
+  symbol?: string;
+};
+
+/**
+ * Present only for a `hint`.
+ */
+export type LiveSignalOrder = {
+  orderKind?: string;
+  price?: string | null;
+  amount?: string | null;
+  stopPrice?: string | null;
+  trailPct?: string | null;
+} | null;
+
+export type LiveConnectionToken = {
+  /**
+   * Pass as the `token` field of the WebSocket `connect` command — see the "Live execution" guide.
+   */
+  token: string;
+  expiresAtMs: number;
+};
+
+export type LiveParamsUpdateResult = {
+  runId: string;
+  paramsVersion: number;
+  /**
+   * Epoch milliseconds — the earliest moment the new values are guaranteed to be in effect.
+   */
+  effectiveAtMs: number;
+};
+
 export type AuthenticateData = {
   body?: never;
   path?: never;
@@ -2028,7 +2292,7 @@ export type ListStrategiesResponse =
 
 export type CompileStrategyData = {
   /**
-   * Raw strategy Java source code
+   * Raw strategy source code, Java or QTScript
    */
   body: string;
   path?: never;
@@ -2038,7 +2302,8 @@ export type CompileStrategyData = {
 
 export type CompileStrategyErrors = {
   /**
-   * The source is not valid Java; the message carries the compiler diagnostics. Nothing is
+   * The source is not valid; the message carries the diagnostics — the compiler's for Java,
+   * and for QTScript `Line N, Column M:` entries against your own source. Nothing is
    * registered, so there is no id to look up afterwards.
    *
    */
@@ -2209,7 +2474,7 @@ export type GetStrategyCodeResponses = {
   200: {
     strategyId: StrategyId;
     /**
-     * Raw strategy Java source code, exactly as registered.
+     * Raw strategy source code (Java or QTScript), exactly as registered.
      */
     code: string;
   };
@@ -2242,7 +2507,9 @@ export type PrepareBacktestData = {
 export type PrepareBacktestErrors = {
   /**
    * Invalid request or parameters. Also returned when `from` is older than the configured
-   * lookback window or `to` is in the future. For `exchangeId: user`, also returned when
+   * lookback window or `to` is in the future, or when `type` is `kline` and `cadence` is not
+   * one of the cadences kline data is available at (the message lists them). For
+   * `exchangeId: user`, also returned when
    * the dataset's current upload has not finished ingesting, or `cadence` asks for a finer
    * granularity than the dataset's own discovered cadence (or one that isn't an exact
    * multiple of it), or the requested range exceeds your tier's range limit.
@@ -2339,7 +2606,9 @@ export type ExecuteSweepData = {
 
 export type ExecuteSweepErrors = {
   /**
-   * Invalid sweep specification or the expanded grid exceeds the server limit.
+   * Invalid sweep specification, a `type` that cannot be swept yet (`funding`), or the
+   * expanded grid exceeds the server limit.
+   *
    */
   400: ResponseError;
   /**
@@ -2606,7 +2875,9 @@ export type ExecuteBacktestData = {
 
 export type ExecuteBacktestErrors = {
   /**
-   * Invalid request or parameters
+   * Invalid request or parameters. Also returned for a `type` that cannot be executed yet
+   * (`funding`); the message names the sources that can.
+   *
    */
   400: ResponseError;
   /**
@@ -3065,6 +3336,297 @@ export type GetDatasetImportResponses = {
 
 export type GetDatasetImportResponse =
   GetDatasetImportResponses[keyof GetDatasetImportResponses];
+
+export type StopLiveData = {
+  body?: never;
+  path: {
+    /**
+     * The id returned by `POST /strategy`
+     */
+    strategyId: StrategyId;
+  };
+  query?: never;
+  url: "/strategy/{strategyId}/live";
+};
+
+export type StopLiveErrors = {
+  /**
+   * You have never started a live run for this strategy.
+   */
+  404: ResponseError;
+};
+
+export type StopLiveError = StopLiveErrors[keyof StopLiveErrors];
+
+export type StopLiveResponses = {
+  /**
+   * Stop requested (or already stopped) — the run's current state
+   */
+  200: LiveRun;
+};
+
+export type StopLiveResponse = StopLiveResponses[keyof StopLiveResponses];
+
+export type GetLiveData = {
+  body?: never;
+  path: {
+    /**
+     * The id returned by `POST /strategy`
+     */
+    strategyId: StrategyId;
+  };
+  query?: never;
+  url: "/strategy/{strategyId}/live";
+};
+
+export type GetLiveErrors = {
+  /**
+   * You have never started a live run for this strategy.
+   */
+  404: ResponseError;
+};
+
+export type GetLiveError = GetLiveErrors[keyof GetLiveErrors];
+
+export type GetLiveResponses = {
+  /**
+   * The run's current state
+   */
+  200: LiveRun;
+};
+
+export type GetLiveResponse = GetLiveResponses[keyof GetLiveResponses];
+
+export type StartLiveData = {
+  body: StartLiveRequest;
+  path: {
+    /**
+     * The id returned by `POST /strategy`
+     */
+    strategyId: StrategyId;
+  };
+  query?: never;
+  url: "/strategy/{strategyId}/live";
+};
+
+export type StartLiveErrors = {
+  /**
+   * Malformed `sources` (not exactly one entry, missing field, unsupported `type`), or an invalid `visibility`.
+   */
+  400: ResponseError;
+  /**
+   * No such registered strategy for this user, or it has never been compiled.
+   */
+  404: ResponseError;
+  /**
+   * A run for this strategy is already active. Stop it first.
+   */
+  409: ResponseError;
+  /**
+   * Your plan does not include live runs, would exceed your concurrent-run or
+   * instrument-count limit, or the platform is at capacity right now. Carries a
+   * `Retry-After` header.
+   *
+   */
+  429: ResponseError;
+};
+
+export type StartLiveError = StartLiveErrors[keyof StartLiveErrors];
+
+export type StartLiveResponses = {
+  /**
+   * Started — the run's own state, in the sandbox stage
+   */
+  201: LiveRun;
+};
+
+export type StartLiveResponse = StartLiveResponses[keyof StartLiveResponses];
+
+export type ListPublicLiveData = {
+  body?: never;
+  path?: never;
+  query?: {
+    /**
+     * The `runId` from a previous page's `_links.next.href`. Omit for the first page.
+     */
+    cursor?: string;
+    /**
+     * Page size. Larger values are capped, not rejected.
+     */
+    limit?: number;
+  };
+  url: "/live/public";
+};
+
+export type ListPublicLiveErrors = {
+  /**
+   * An invalid `cursor` or `limit`.
+   */
+  400: ResponseError;
+};
+
+export type ListPublicLiveError =
+  ListPublicLiveErrors[keyof ListPublicLiveErrors];
+
+export type ListPublicLiveResponses = {
+  /**
+   * A page of public runs
+   */
+  200: PublicLiveListResponse;
+};
+
+export type ListPublicLiveResponse =
+  ListPublicLiveResponses[keyof ListPublicLiveResponses];
+
+export type UpdateLiveData = {
+  body?: UpdateLiveRequest;
+  path: {
+    /**
+     * The `runId` from `POST`/`GET`/`DELETE` `.../live` or from `GET /live/public`
+     */
+    runId: string;
+  };
+  query?: never;
+  url: "/live/{runId}";
+};
+
+export type UpdateLiveErrors = {
+  /**
+   * `visibility` present but not `private`/`public`.
+   */
+  400: ResponseError;
+  /**
+   * No such run, or you do not own it — the two look identical on purpose.
+   */
+  404: ResponseError;
+};
+
+export type UpdateLiveError = UpdateLiveErrors[keyof UpdateLiveErrors];
+
+export type UpdateLiveResponses = {
+  /**
+   * Updated
+   */
+  200: LiveRunCompact;
+};
+
+export type UpdateLiveResponse = UpdateLiveResponses[keyof UpdateLiveResponses];
+
+export type UpdateLiveParamsData = {
+  body: UpdateLiveParamsRequest;
+  path: {
+    runId: string;
+  };
+  query?: never;
+  url: "/live/{runId}/params";
+};
+
+export type UpdateLiveParamsErrors = {
+  /**
+   * `params` missing, not an object, empty, or contains a key your strategy does not declare.
+   */
+  400: ResponseError;
+  /**
+   * No such run, or you do not own it.
+   */
+  404: ResponseError;
+  /**
+   * This run's compilation has no declared properties on record — recompile the strategy to enable runtime parameter updates.
+   */
+  409: ResponseError;
+};
+
+export type UpdateLiveParamsError =
+  UpdateLiveParamsErrors[keyof UpdateLiveParamsErrors];
+
+export type UpdateLiveParamsResponses = {
+  /**
+   * Accepted
+   */
+  200: LiveParamsUpdateResult;
+};
+
+export type UpdateLiveParamsResponse =
+  UpdateLiveParamsResponses[keyof UpdateLiveParamsResponses];
+
+export type GetLiveRunSignalsData = {
+  body?: never;
+  path: {
+    /**
+     * The run whose signals to read.
+     */
+    runId: string;
+  };
+  query?: {
+    /**
+     * Start from this moment (epoch ms). Omitted, or older than the available window, starts at `availableSinceMs`. Ignored when `cursor` is given.
+     */
+    sinceMs?: number;
+    /**
+     * Narrow to one or more instruments. Omitted, or `*`, returns every instrument the run
+     * covers. Accepts a single pair (`BTC/USDT`), either half as a wildcard (`*USDT` for any
+     * base against that quote, `BTC*` for that base against any quote), or a comma-separated
+     * list of pairs (`BTC/USDT,ETH/EUR`). Symbols are matched exactly, case included — pass
+     * them as this API reports them.
+     *
+     */
+    instrument?: string;
+    /**
+     * Continue from a previous page's `_links.next`. Takes precedence over `sinceMs`.
+     */
+    cursor?: string;
+    /**
+     * Page size.
+     */
+    limit?: number;
+  };
+  url: "/live/{runId}/signals";
+};
+
+export type GetLiveRunSignalsErrors = {
+  /**
+   * `instrument`, `sinceMs`, `limit` or `cursor` is malformed.
+   */
+  400: ResponseError;
+  /**
+   * No such run, or not one you may read.
+   */
+  404: ResponseError;
+  /**
+   * The cursor's position is no longer available — restart from the `availableSinceMs` named in the message.
+   */
+  410: ResponseError;
+};
+
+export type GetLiveRunSignalsError =
+  GetLiveRunSignalsErrors[keyof GetLiveRunSignalsErrors];
+
+export type GetLiveRunSignalsResponses = {
+  /**
+   * One page of signals
+   */
+  200: LiveSignalPage;
+};
+
+export type GetLiveRunSignalsResponse =
+  GetLiveRunSignalsResponses[keyof GetLiveRunSignalsResponses];
+
+export type MintLiveConnectionTokenData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/live/token";
+};
+
+export type MintLiveConnectionTokenResponses = {
+  /**
+   * Token minted
+   */
+  200: LiveConnectionToken;
+};
+
+export type MintLiveConnectionTokenResponse =
+  MintLiveConnectionTokenResponses[keyof MintLiveConnectionTokenResponses];
 
 export type ClientOptions = {
   baseUrl:

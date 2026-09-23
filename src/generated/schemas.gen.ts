@@ -445,8 +445,17 @@ export const ExchangeSchema = {
 
 export const DataSourceTypeSchema = {
   type: "string",
-  description: "Managed exchange data sources available for backtesting.",
-  enum: ["ticker"],
+  description: `Managed exchange data sources available for backtesting.
+
+* \`ticker\` — trades. Can be prepared, executed and swept.
+* \`kline\` — aggregated bars (candlesticks). Can be prepared, executed and swept. A run reads
+  bars of the \`cadence\` the data was prepared at: you choose the bar width when you prepare,
+  and the strategy does not fix it. See \`PrepareRequest.cadence\` for the accepted values.
+* \`funding\` — funding rates. Can be **prepared but not executed or swept yet**: a \`funding\`
+  request to \`execute\` or \`executeSweep\` is rejected with \`400\` before anything is queued,
+  and the message names the sources that can be run.
+`,
+  enum: ["ticker", "kline", "funding"],
   example: "ticker",
 } as const;
 
@@ -508,9 +517,14 @@ resampling the source and stored alongside the native blob in cache. A target fi
 than the source, or not an exact multiple of it, returns \`400\`. What's accepted, and
 what omitting it means, depends on the source:
 
-* Managed exchange — one of \`1s\`, \`5s\`, \`1m\`, \`3m\`, \`5m\`, \`15m\`, \`30m\`, \`1h\`, \`2h\`,
-  \`4h\`, \`8h\`, \`12h\`, \`1d\`, \`1w\`, \`1q\`; any other label returns \`400\`. Omitted = \`1s\`,
-  the publisher's native cadence.
+* Managed exchange, \`ticker\` or \`funding\` — one of \`1s\`, \`5s\`, \`1m\`, \`3m\`, \`5m\`, \`15m\`,
+  \`30m\`, \`1h\`, \`2h\`, \`4h\`, \`8h\`, \`12h\`, \`1d\`, \`1w\`, \`1q\`; any other label returns \`400\`.
+  Omitted = \`1s\`, the publisher's native cadence.
+* Managed exchange, \`kline\` — one of \`1s\`, \`1m\`, \`5m\`, \`15m\`, \`30m\`, \`1h\`, \`4h\`, \`1d\`;
+  any other label, including \`5s\`, \`3m\` and \`8h\`, returns \`400\` and names the accepted
+  ones. Omitted = \`1s\`. This is the width of the bars a run reads: it is chosen here,
+  once, and the same strategy can be run at several cadences by preparing the range at
+  each.
 * Dataset (\`exchangeId: user\`) — omitted = the dataset version's own discovered
   \`cadence\` (see \`DatasetVersion.cadence\`), served as-is. Any cadence equal to or
   coarser than it and an exact multiple of it is accepted, including ones outside the
@@ -1880,8 +1894,9 @@ export const EquityCurveResultSchema = {
 
 export const strategyIdSchema = {
   description: `Unique identifier for a compiled strategy, derived from the source itself: the same code
-always yields the same id, for every caller, whatever its formatting. See
-\`POST /strategy\` for exactly which rewrites preserve it and which do not.
+always yields the same id, for every caller. How much formatting the id ignores depends on
+the language — see \`POST /strategy\` for exactly which rewrites preserve it and which do
+not.
 `,
   type: "string",
   example: "6bsh31ikwkuivhtgcoa6s4",
@@ -2767,6 +2782,477 @@ export const AuthTokenErrorSchema = {
     message: {
       type: "string",
       description: "Human-readable description of the failure.",
+    },
+  },
+} as const;
+
+export const LiveSourceSchema = {
+  type: "object",
+  required: ["venueType", "exchange", "segment", "type", "instruments"],
+  description:
+    "One market feed a live run consumes. Exactly one entry per run today.",
+  properties: {
+    venueType: {
+      type: "string",
+      example: "cx",
+      description:
+        "Venue category. `cx` (centralized exchange) is the only one live runs support today.",
+    },
+    exchange: {
+      type: "string",
+      example: "binance",
+    },
+    segment: {
+      type: "string",
+      example: "spot",
+    },
+    type: {
+      type: "string",
+      enum: ["ticker", "kline"],
+      description:
+        "Both `ticker` and `kline` connect to the lightest (fastest) cadence available for the exchange — today, 1 tick/second on every supported exchange. Choosing a specific cadence is not offered yet.",
+    },
+    instruments: {
+      type: "array",
+      items: {
+        type: "string",
+      },
+      example: ["BTC/USDT"],
+      description:
+        'Instrument symbols, or `["*"]` for every instrument the exchange/segment offers (tier-gated).',
+    },
+  },
+} as const;
+
+export const StartLiveRequestSchema = {
+  type: "object",
+  required: ["sources"],
+  properties: {
+    sources: {
+      type: "array",
+      minItems: 1,
+      maxItems: 1,
+      items: {
+        $ref: "#/components/schemas/LiveSource",
+      },
+    },
+    params: {
+      type: "object",
+      description:
+        "Strategy parameters to start with. Opaque key/value pairs — see this strategy's own `declaredProperties` (from `POST /strategy`) for the keys it accepts.",
+      additionalProperties: true,
+    },
+    visibility: {
+      type: "string",
+      enum: ["private", "public"],
+      default: "private",
+      description:
+        "A `public` run appears in `GET /live/public` and its signal channel accepts subscriptions from anyone, not only you.",
+    },
+    relay: {
+      type: "boolean",
+      default: false,
+      description: `Request that this run's signals be relayed over its WebSocket channel once it reaches the \`live\` stage — see the "Live execution" guide. Has no effect while the run is still in the \`sandbox\` stage, regardless of this value.`,
+    },
+    name: {
+      type: "string",
+    },
+    description: {
+      type: "string",
+    },
+  },
+} as const;
+
+export const UpdateLiveRequestSchema = {
+  type: "object",
+  properties: {
+    visibility: {
+      type: "string",
+      enum: ["private", "public"],
+    },
+    name: {
+      type: "string",
+    },
+    description: {
+      type: "string",
+    },
+  },
+} as const;
+
+export const UpdateLiveParamsRequestSchema = {
+  type: "object",
+  required: ["params"],
+  properties: {
+    params: {
+      type: "object",
+      additionalProperties: true,
+      description:
+        "Must be non-empty; every key must be a property your strategy declares.",
+    },
+  },
+} as const;
+
+export const LiveRunSchema = {
+  type: "object",
+  required: [
+    "strategyId",
+    "runId",
+    "visibility",
+    "stage",
+    "state",
+    "desired",
+    "sources",
+    "params",
+    "paramsVersion",
+    "relay",
+    "startedAtMs",
+  ],
+  description:
+    "A live run's full state, as returned by starting, reading, or stopping it through its strategy.",
+  properties: {
+    strategyId: {
+      $ref: "#/components/schemas/strategyId",
+    },
+    runId: {
+      type: "string",
+      description:
+        "This run's own id — its canonical identity for `PATCH`/`PUT .../params` and for `GET /live/public`.",
+    },
+    name: {
+      type: "string",
+    },
+    description: {
+      type: "string",
+    },
+    visibility: {
+      type: "string",
+      enum: ["private", "public"],
+    },
+    stage: {
+      type: "string",
+      enum: ["SANDBOX", "LIVE"],
+      description:
+        "A new run always starts `SANDBOX` — a trial run compared against a second execution for agreement — and moves to `LIVE` once it passes.",
+    },
+    state: {
+      type: "string",
+      description: `\`STARTING\` until first observed running; otherwise the runner's own reported state (e.g. \`RUNNING\`).`,
+    },
+    desired: {
+      type: "string",
+      enum: ["RUNNING", "STOPPED"],
+      description:
+        "What you last asked for. `state` can lag this briefly after `DELETE`.",
+    },
+    reason: {
+      type: "string",
+      description:
+        "Present only when the run stopped because it exceeded its resource allowance.",
+    },
+    sources: {
+      type: "array",
+      items: {
+        $ref: "#/components/schemas/LiveSource",
+      },
+    },
+    params: {
+      type: "object",
+      additionalProperties: true,
+    },
+    paramsVersion: {
+      type: "integer",
+      description:
+        "Increments on every accepted `PUT .../params` call, including one that resends the current values.",
+    },
+    relay: {
+      type: "boolean",
+      description: `Whether this run's signals are being relayed over the WebSocket channel described in the "Live execution" guide, right now. This is the effective value — \`false\` on a \`sandbox\` run regardless of what was requested at start; matches the requested value once \`stage\` reaches \`live\`.`,
+    },
+    startedAtMs: {
+      type: "integer",
+      format: "int64",
+      description: "Epoch milliseconds.",
+    },
+    gate: {
+      type: "object",
+      additionalProperties: true,
+      description:
+        "The sandbox trial's promotion verdict, once one exists. Shape is not yet stabilized as public API — treat as opaque diagnostics.",
+    },
+  },
+} as const;
+
+export const LiveRunCompactSchema = {
+  type: "object",
+  required: ["runId", "visibility", "stage", "state", "sources"],
+  description:
+    "A run's state as returned by `PATCH /live/{runId}` — narrower than `LiveRun` (no `strategyId`, `params`, or `desired`), since this endpoint is addressed by `runId` alone.",
+  properties: {
+    runId: {
+      type: "string",
+    },
+    name: {
+      type: "string",
+    },
+    description: {
+      type: "string",
+    },
+    visibility: {
+      type: "string",
+      enum: ["private", "public"],
+    },
+    stage: {
+      type: "string",
+      enum: ["SANDBOX", "LIVE"],
+    },
+    state: {
+      type: "string",
+    },
+    sources: {
+      type: "array",
+      items: {
+        $ref: "#/components/schemas/LiveSource",
+      },
+    },
+  },
+} as const;
+
+export const PublicLiveRunSchema = {
+  type: "object",
+  required: ["runId", "sources", "state", "createdAtMs"],
+  description:
+    "A run as it appears in `GET /live/public` — never reveals who owns it or which strategy it runs.",
+  properties: {
+    runId: {
+      type: "string",
+    },
+    name: {
+      type: "string",
+    },
+    description: {
+      type: "string",
+    },
+    sources: {
+      type: "array",
+      items: {
+        $ref: "#/components/schemas/LiveSource",
+      },
+    },
+    state: {
+      type: "string",
+    },
+    createdAtMs: {
+      type: "integer",
+      format: "int64",
+    },
+  },
+} as const;
+
+export const PublicLiveListResponseSchema = {
+  type: "object",
+  required: ["runs"],
+  properties: {
+    runs: {
+      type: "array",
+      items: {
+        $ref: "#/components/schemas/PublicLiveRun",
+      },
+    },
+    _links: {
+      $ref: "#/components/schemas/PublicLiveListLinks",
+    },
+  },
+} as const;
+
+export const PublicLiveListLinksSchema = {
+  type: "object",
+  description: "Present only when another page exists.",
+  properties: {
+    next: {
+      $ref: "#/components/schemas/PublicLiveNextLink",
+    },
+  },
+} as const;
+
+export const PublicLiveNextLinkSchema = {
+  type: "object",
+  properties: {
+    href: {
+      type: "string",
+    },
+  },
+} as const;
+
+export const LiveSignalPageSchema = {
+  type: "object",
+  required: ["signals"],
+  description: "One page of a run's recorded signals, oldest first.",
+  properties: {
+    signals: {
+      type: "array",
+      items: {
+        $ref: "#/components/schemas/LiveSignal",
+      },
+    },
+    availableSinceMs: {
+      type: "integer",
+      format: "int64",
+      description:
+        "The oldest moment this run's signals can still be read from. Absent when the run has produced nothing yet. It moves forward over time as older signals are discarded, so a `sinceMs` earlier than this is served from here instead.",
+    },
+    _links: {
+      $ref: "#/components/schemas/PublicLiveListLinks",
+    },
+  },
+} as const;
+
+export const LiveSignalSchema = {
+  type: "object",
+  required: [
+    "v",
+    "signalId",
+    "runId",
+    "stage",
+    "type",
+    "eventTsMs",
+    "emittedAtMs",
+    "instrument",
+    "digest",
+  ],
+  description:
+    "One signal, in the same shape the real-time signal channel delivers.",
+  properties: {
+    v: {
+      type: "integer",
+      description: "Envelope schema version.",
+    },
+    signalId: {
+      type: "string",
+      description:
+        "Stable id for this exact signal — dedupe on it across reconnects or overlapping reads.",
+    },
+    runId: {
+      type: "string",
+    },
+    stage: {
+      type: "string",
+      enum: ["sandbox", "live"],
+      description: "The stage the run was in when this signal was produced.",
+    },
+    paramsVersion: {
+      type: "integer",
+      description: "The parameter set in force when this signal was produced.",
+    },
+    type: {
+      type: "string",
+      enum: ["hint", "info", "marker", "command"],
+    },
+    kind: {
+      type: ["string", "null"],
+      description: `\`BUY\`/\`SELL\` for a \`hint\`, the command name for a \`command\`, absent otherwise.`,
+    },
+    eventTsMs: {
+      type: "integer",
+      format: "int64",
+      description: "Market time the signal was produced.",
+    },
+    emittedAtMs: {
+      type: "integer",
+      format: "int64",
+      description: "Time it was published — always at or after `eventTsMs`.",
+    },
+    instrument: {
+      $ref: "#/components/schemas/LiveSignalInstrument",
+    },
+    order: {
+      $ref: "#/components/schemas/LiveSignalOrder",
+    },
+    data: {
+      type: "object",
+      additionalProperties: true,
+      description: "The signal's own free-form payload.",
+    },
+    regenerated: {
+      type: "boolean",
+      description: `\`true\` only for a signal republished to fill a gap in the record.`,
+    },
+    digest: {
+      type: "string",
+      description:
+        "Content hash, for checking that two independent deliveries of the same signal agree.",
+    },
+  },
+} as const;
+
+export const LiveSignalInstrumentSchema = {
+  type: "object",
+  properties: {
+    exchange: {
+      type: "string",
+    },
+    segment: {
+      type: "string",
+    },
+    symbol: {
+      type: "string",
+      description: "Slashed form, e.g. `BTC/USDT`.",
+    },
+  },
+} as const;
+
+export const LiveSignalOrderSchema = {
+  type: ["object", "null"],
+  description: "Present only for a `hint`.",
+  properties: {
+    orderKind: {
+      type: "string",
+    },
+    price: {
+      type: ["string", "null"],
+    },
+    amount: {
+      type: ["string", "null"],
+    },
+    stopPrice: {
+      type: ["string", "null"],
+    },
+    trailPct: {
+      type: ["string", "null"],
+    },
+  },
+} as const;
+
+export const LiveConnectionTokenSchema = {
+  type: "object",
+  required: ["token", "expiresAtMs"],
+  properties: {
+    token: {
+      type: "string",
+      description:
+        'Pass as the `token` field of the WebSocket `connect` command — see the "Live execution" guide.',
+    },
+    expiresAtMs: {
+      type: "integer",
+      format: "int64",
+    },
+  },
+} as const;
+
+export const LiveParamsUpdateResultSchema = {
+  type: "object",
+  required: ["runId", "paramsVersion", "effectiveAtMs"],
+  properties: {
+    runId: {
+      type: "string",
+    },
+    paramsVersion: {
+      type: "integer",
+    },
+    effectiveAtMs: {
+      type: "integer",
+      format: "int64",
+      description:
+        "Epoch milliseconds — the earliest moment the new values are guaranteed to be in effect.",
     },
   },
 } as const;
