@@ -859,6 +859,8 @@ export const SweepBaseConfigSchema = {
       format: "double",
       exclusiveMinimum: 0,
       maximum: 100,
+      description:
+        "Share of the free balance each entry locks, in percent (0-100]. Omitted, a backtest sizes every entry with everything available.",
     },
   },
 } as const;
@@ -2860,6 +2862,73 @@ export const StartLiveRequestSchema = {
     description: {
       type: "string",
     },
+    paper: {
+      $ref: "#/components/schemas/LivePaperConfig",
+    },
+  },
+} as const;
+
+export const LivePaperConfigSchema = {
+  type: "object",
+  additionalProperties: false,
+  description: `Paper trading for this run: the same economics as a backtest's \`baseConfig\` (same fields,
+defaults and limits), plus \`output\`. An empty object takes every default. Each quote
+currency the run trades gets its own simulated account, opened with \`initialFunding\` in
+that currency; accounts are never added together. As returned on a run, the block is
+normalised: \`feeRate\` is resolved into \`buyFeeRate\`/\`sellFeeRate\` and defaults are filled
+in.
+`,
+  properties: {
+    initialFunding: {
+      type: "number",
+      format: "double",
+      exclusiveMinimum: 0,
+      maximum: 1000000000,
+      default: 100,
+      description:
+        "Starting capital of each account, in that account's own quote currency.",
+    },
+    feeRate: {
+      type: "number",
+      format: "double",
+      minimum: 0,
+      default: 0.001,
+      description:
+        "Fee rate for both sides (0.001 = 0.1%). Accepted on start; returned resolved into the two fields below.",
+    },
+    buyFeeRate: {
+      type: "number",
+      format: "double",
+      minimum: 0,
+      description: "Buy-side fee rate; overrides `feeRate`.",
+    },
+    sellFeeRate: {
+      type: "number",
+      format: "double",
+      minimum: 0,
+      description: "Sell-side fee rate; overrides `feeRate`.",
+    },
+    feeLeg: {
+      type: "string",
+      enum: ["RECEIVED", "QUOTE", "BASE"],
+      default: "RECEIVED",
+      description:
+        "Which asset fees are charged in. Case-insensitive on start.",
+    },
+    percentAmountToLock: {
+      type: "number",
+      format: "double",
+      exclusiveMinimum: 0,
+      maximum: 100,
+      description:
+        "Share of the account's free balance each entry locks, in percent. Omitted, the strategy's own setting applies, and without one 10%.",
+    },
+    output: {
+      type: "string",
+      enum: ["separate", "mix"],
+      default: "separate",
+      description: `\`separate\` keeps paper output out of the run's signals (read it with \`GET /live/{runId}/paper\`); \`mix\` also interleaves it into the run's signals as \`type: paper\`, right after the signal that caused it.`,
+    },
   },
 } as const;
 
@@ -2978,6 +3047,15 @@ export const LiveRunSchema = {
       additionalProperties: true,
       description:
         "The sandbox trial's promotion verdict, once one exists. Shape is not yet stabilized as public API — treat as opaque diagnostics.",
+    },
+    paper: {
+      allOf: [
+        {
+          $ref: "#/components/schemas/LivePaperConfig",
+        },
+      ],
+      description:
+        "The run's paper trading configuration as accepted at start, normalised. Absent when the run has no paper trading.",
     },
   },
 } as const;
@@ -3191,6 +3269,217 @@ export const LiveSignalPageSchema = {
   },
 } as const;
 
+export const LivePaperSchema = {
+  type: "object",
+  required: ["runId", "stage", "accounts"],
+  properties: {
+    runId: {
+      type: "string",
+    },
+    stage: {
+      type: "string",
+      enum: ["SANDBOX", "LIVE"],
+    },
+    accounts: {
+      type: "array",
+      items: {
+        $ref: "#/components/schemas/LivePaperAccount",
+      },
+    },
+  },
+} as const;
+
+export const LivePaperAccountSchema = {
+  type: "object",
+  required: [
+    "currency",
+    "initialFunding",
+    "equity",
+    "realisedPnl",
+    "trades",
+    "gaps",
+    "openPositions",
+  ],
+  description: "One simulated account — one per quote currency the run trades.",
+  properties: {
+    currency: {
+      type: "string",
+      description: "The account's quote currency; every amount below is in it.",
+    },
+    initialFunding: {
+      type: "number",
+      format: "double",
+    },
+    equity: {
+      type: "number",
+      format: "double",
+      description: "Latest recorded equity — see `equityKind`.",
+    },
+    equityAtMs: {
+      type: "integer",
+      format: "int64",
+      description:
+        "Market time of that value. Absent while the account holds its starting capital.",
+    },
+    equityKind: {
+      type: "string",
+      enum: ["equity", "mark"],
+      description: `\`equity\` at a closed trade, \`mark\` at a periodic mark-to-market (includes open positions at market price).`,
+    },
+    realisedPnl: {
+      type: "number",
+      format: "double",
+      description: "Sum of the PnL of the closed trades.",
+    },
+    trades: {
+      type: "integer",
+      format: "int64",
+      description: "Closed trades.",
+    },
+    gaps: {
+      type: "integer",
+      description:
+        "Times open positions were lost because the run was restarted with them open.",
+    },
+    openPositions: {
+      type: "array",
+      items: {
+        $ref: "#/components/schemas/LivePaperPosition",
+      },
+    },
+    kpi: {
+      $ref: "#/components/schemas/LivePaperKpi",
+    },
+  },
+} as const;
+
+export const LivePaperPositionSchema = {
+  type: "object",
+  required: ["instrument", "base", "cost"],
+  properties: {
+    instrument: {
+      type: "string",
+      example: "BTC/USDT",
+    },
+    base: {
+      type: "number",
+      format: "double",
+      description: "Amount held, in the base asset.",
+    },
+    cost: {
+      type: "number",
+      format: "double",
+      description: "What it cost, in the account's currency.",
+    },
+  },
+} as const;
+
+export const LivePaperKpiSchema = {
+  type: "object",
+  description:
+    "The same KPIs a backtest reports, over the trades closed so far. Absent until the first closed trade is recorded.",
+  properties: {
+    totalTrades: {
+      type: "integer",
+      format: "int64",
+    },
+    winCount: {
+      type: "integer",
+      format: "int64",
+    },
+    lossCount: {
+      type: "integer",
+      format: "int64",
+    },
+    winRate: {
+      type: "number",
+      format: "double",
+      description: "Ratio (0.5 = half the trades won).",
+    },
+    pnlTotal: {
+      type: "number",
+      format: "double",
+    },
+    pnlTotalPercent: {
+      type: "number",
+      format: "double",
+      description: "Percent of `initialFunding` (0-100 scale).",
+    },
+    sharpeRatio: {
+      type: ["number", "null"],
+      format: "double",
+    },
+    sortinoRatio: {
+      type: ["number", "null"],
+      format: "double",
+    },
+    cagr: {
+      type: ["number", "null"],
+      format: "double",
+      description: "Ratio (0.15 for 15%).",
+    },
+    maxDrawdown: {
+      type: "number",
+      format: "double",
+    },
+    maxDrawdownPercent: {
+      type: "number",
+      format: "double",
+      description: "Percent (0-100 scale).",
+    },
+  },
+} as const;
+
+export const LivePaperEquityPageSchema = {
+  type: "object",
+  required: ["points"],
+  properties: {
+    points: {
+      type: "array",
+      items: {
+        $ref: "#/components/schemas/LivePaperEquityPoint",
+      },
+    },
+    _links: {
+      type: "object",
+      properties: {
+        next: {
+          type: "object",
+          properties: {
+            href: {
+              type: "string",
+            },
+          },
+        },
+      },
+    },
+  },
+} as const;
+
+export const LivePaperEquityPointSchema = {
+  type: "object",
+  required: ["currency", "kind", "eventTsMs"],
+  properties: {
+    currency: {
+      type: "string",
+    },
+    kind: {
+      type: "string",
+      enum: ["equity", "mark", "gap"],
+    },
+    eventTsMs: {
+      type: "integer",
+      format: "int64",
+      description: "Market time of the point.",
+    },
+    equity: {
+      type: "number",
+      format: "double",
+      description: "Absent on a `gap`.",
+    },
+  },
+} as const;
+
 export const LiveSignalSchema = {
   type: "object",
   required: [
@@ -3230,11 +3519,12 @@ export const LiveSignalSchema = {
     },
     type: {
       type: "string",
-      enum: ["hint", "info", "marker", "command"],
+      enum: ["hint", "info", "marker", "command", "paper"],
+      description: `\`paper\` items appear only for a run whose \`paper.output\` is \`mix\`; they are not relayed over the WebSocket channel.`,
     },
     kind: {
       type: ["string", "null"],
-      description: `\`BUY\`/\`SELL\` for a \`hint\`, the command name for a \`command\`, absent otherwise.`,
+      description: `\`BUY\`/\`SELL\` for a \`hint\`, the command name for a \`command\`; for \`paper\`, what the item is: \`fill\`, \`trade\`, \`equity\`, \`mark\`, \`kpi\` or \`gap\`. Absent otherwise.`,
     },
     eventTsMs: {
       type: "integer",
@@ -3247,7 +3537,16 @@ export const LiveSignalSchema = {
       description: "Time it was published — always at or after `eventTsMs`.",
     },
     instrument: {
-      $ref: "#/components/schemas/LiveSignalInstrument",
+      anyOf: [
+        {
+          $ref: "#/components/schemas/LiveSignalInstrument",
+        },
+        {
+          type: "null",
+        },
+      ],
+      description:
+        "The instrument the signal is about. `null` only for a `paper` item about a whole account (`equity`, `mark`, `kpi`), whose `data.currency` names the account.",
     },
     order: {
       $ref: "#/components/schemas/LiveSignalOrder",

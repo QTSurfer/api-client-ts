@@ -68,8 +68,8 @@ pluggable token stores so callers don't reinvent that plumbing.
 
 All operations are exported as standalone functions; every operation accepts an `Options` object and returns `{ data, error, response }`.
 
-The table is exhaustive: `src/generated/` is produced from the OpenAPI spec, so **all 41 operations**
-the spec declares are exported. The rows below describe **spec version 0.126.1**, which is versioned
+The table is exhaustive: `src/generated/` is produced from the OpenAPI spec, so **all 44 operations**
+the spec declares are exported. The rows below describe **spec version 0.127.0**, which is versioned
 independently of this package.
 
 | Function | Method | Path | Purpose |
@@ -107,16 +107,19 @@ independently of this package.
 | `getDatasetUpload` | GET | `/datasets/{datasetId}/uploads/{uploadId}` | Get an upload's ingestion state |
 | `importDataset` | POST | `/datasets/imports` | Create a dataset by importing external history |
 | `getDatasetImport` | GET | `/datasets/{datasetId}/imports/{importId}` | Get an import's fetch and ingestion state |
-| `startLive` | POST | `/strategy/{strategyId}/live` | Start a compiled strategy on a live feed |
+| `startLive` | POST | `/strategy/{strategyId}/live` | Start a compiled strategy on a live feed; optionally simulate fills and equity with `paper` |
 | `getLive` | GET | `/strategy/{strategyId}/live` | Read a strategy's current or most recent live run |
 | `stopLive` | DELETE | `/strategy/{strategyId}/live` | Request a strategy's active live run to stop |
+| `listLive` | GET | `/live` | Page all live runs owned by the authenticated account |
 | `listPublicLive` | GET | `/live/public` | Page publicly visible live runs |
 | `updateLive` | PATCH | `/live/{runId}` | Change a run's visibility, name, or description |
 | `updateLiveParams` | PUT | `/live/{runId}/params` | Change parameters while a run stays active |
-| `getLiveRunSignals` | GET | `/live/{runId}/signals` | Page retained signals, optionally by time or instrument |
+| `getLiveRunSignals` | GET | `/live/{runId}/signals` | Page retained signals by time, instrument, or signal type (`paper` items only when output is `mix`) |
+| `getLiveRunPaper` | GET | `/live/{runId}/paper` | Read simulated accounts, open positions, equity, and KPIs for a paper-trading run |
+| `getLiveRunPaperEquity` | GET | `/live/{runId}/paper/equity` | Page the run's retained paper equity curve, optionally by quote currency or start time |
 | `mintLiveConnectionToken` | POST | `/live/token` | Mint a short-lived Centrifugo connection token |
 
-All generated types (`Exchange`, `InstrumentDetail`, `BacktestJobResult`, `PrepareJobState`, `ResultMap`, etc.) are re-exported from the root.
+All generated types (`Exchange`, `InstrumentDetail`, `BacktestJobResult`, `PrepareJobState`, `ResultMap`, `LivePaper`, `LivePaperAccount`, `LivePaperEquityPage`, etc.) are re-exported from the root.
 
 ## Configuring the client
 

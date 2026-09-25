@@ -124,6 +124,12 @@ import type {
   GetLiveRunSignalsData,
   GetLiveRunSignalsResponse,
   GetLiveRunSignalsError,
+  GetLiveRunPaperData,
+  GetLiveRunPaperResponse,
+  GetLiveRunPaperError,
+  GetLiveRunPaperEquityData,
+  GetLiveRunPaperEquityResponse,
+  GetLiveRunPaperEquityError,
   MintLiveConnectionTokenData,
   MintLiveConnectionTokenResponse,
 } from "./types.gen";
@@ -1342,6 +1348,14 @@ export const getLive = <ThrowOnError extends boolean = false>(
  * the "Live execution" guide linked from this tag's description for the full flow (minting a
  * connection token, the channel and RPC method).
  *
+ * **Paper trading.** Pass a `paper` block to have the run's hints executed in simulation from
+ * its first tick, as a backtest would execute them: fills, closed trades, equity and KPIs,
+ * with one simulated account per quote currency. Omitted, the run has no paper trading. It
+ * takes the same economics as a backtest's `baseConfig` plus where its output goes; read it
+ * back with `GET /live/{runId}/paper`. A strategy that listens to its own execution events
+ * (it overrides `getExecutionCallback()`) has no other execution venue, so it cannot start
+ * without a `paper` block.
+ *
  */
 export const startLive = <ThrowOnError extends boolean = false>(
   options: Options<StartLiveData, ThrowOnError>
@@ -1526,6 +1540,74 @@ export const getLiveRunSignals = <ThrowOnError extends boolean = false>(
       },
     ],
     url: "/live/{runId}/signals",
+    ...options,
+  });
+};
+
+/**
+ * Read a run's paper trading
+ * The run's paper trading as last recorded: one entry per simulated account (one per quote
+ * currency the run trades — never added together), with its starting capital, current
+ * equity, realised PnL, open positions and KPIs. The KPIs are the same a backtest reports,
+ * computed over the trades closed so far.
+ *
+ * `equity` is the account's latest recorded value: at the last closed trade (`equityKind:
+ * equity`), or the last periodic mark-to-market while positions are open (`equityKind:
+ * mark`, taken every minute of market time). Until either exists the account holds its
+ * starting capital.
+ *
+ * Readable by the run's owner, and by anyone if the run is `public`. A run started without
+ * a `paper` block answers `404`.
+ *
+ */
+export const getLiveRunPaper = <ThrowOnError extends boolean = false>(
+  options: Options<GetLiveRunPaperData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).get<
+    GetLiveRunPaperResponse,
+    GetLiveRunPaperError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/live/{runId}/paper",
+    ...options,
+  });
+};
+
+/**
+ * Read a run's paper equity curve
+ * The run's paper equity curve, oldest first, page by page. It is kept for the life of the
+ * run, so unlike signals it has no moving window. Points are `equity` at every closed trade,
+ * `mark` every minute of market time while positions are open, and `gap` where the run was
+ * restarted with positions open: those positions are not carried over, so the curve has no
+ * value there.
+ *
+ * `currency` narrows to one account; without it, every account's points come interleaved by
+ * time, each carrying its currency.
+ *
+ * Readable by the run's owner, and by anyone if the run is `public`.
+ *
+ */
+export const getLiveRunPaperEquity = <ThrowOnError extends boolean = false>(
+  options: Options<GetLiveRunPaperEquityData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).get<
+    GetLiveRunPaperEquityResponse,
+    GetLiveRunPaperEquityError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/live/{runId}/paper/equity",
     ...options,
   });
 };

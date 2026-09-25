@@ -1,5 +1,11 @@
 # @qtsurfer/api-client
 
+## 0.19.0
+
+### Minor Changes
+
+- Add the `paper` option to `startLive`, `getLiveRunPaper` and `getLiveRunPaperEquity` for simulated accounts and equity curves, and a signal-type filter to `getLiveRunSignals`. Export the `LivePaper` account/equity models and nullable account-level paper-signal fields from OpenAPI 0.127.0.
+
 ## 0.18.0
 
 ### Minor Changes

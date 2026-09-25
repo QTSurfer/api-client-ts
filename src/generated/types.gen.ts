@@ -536,6 +536,9 @@ export type SweepBaseConfig = {
   buyFeeRate?: number;
   sellFeeRate?: number;
   feeLeg?: "RECEIVED" | "QUOTE" | "BASE";
+  /**
+   * Share of the free balance each entry locks, in percent (0-100]. Omitted, a backtest sizes every entry with everything available.
+   */
   percentAmountToLock?: number;
 };
 
@@ -1781,6 +1784,47 @@ export type StartLiveRequest = {
   relay?: boolean;
   name?: string;
   description?: string;
+  paper?: LivePaperConfig;
+};
+
+/**
+ * Paper trading for this run: the same economics as a backtest's `baseConfig` (same fields,
+ * defaults and limits), plus `output`. An empty object takes every default. Each quote
+ * currency the run trades gets its own simulated account, opened with `initialFunding` in
+ * that currency; accounts are never added together. As returned on a run, the block is
+ * normalised: `feeRate` is resolved into `buyFeeRate`/`sellFeeRate` and defaults are filled
+ * in.
+ *
+ */
+export type LivePaperConfig = {
+  /**
+   * Starting capital of each account, in that account's own quote currency.
+   */
+  initialFunding?: number;
+  /**
+   * Fee rate for both sides (0.001 = 0.1%). Accepted on start; returned resolved into the two fields below.
+   */
+  feeRate?: number;
+  /**
+   * Buy-side fee rate; overrides `feeRate`.
+   */
+  buyFeeRate?: number;
+  /**
+   * Sell-side fee rate; overrides `feeRate`.
+   */
+  sellFeeRate?: number;
+  /**
+   * Which asset fees are charged in. Case-insensitive on start.
+   */
+  feeLeg?: "RECEIVED" | "QUOTE" | "BASE";
+  /**
+   * Share of the account's free balance each entry locks, in percent. Omitted, the strategy's own setting applies, and without one 10%.
+   */
+  percentAmountToLock?: number;
+  /**
+   * `separate` keeps paper output out of the run's signals (read it with `GET /live/{runId}/paper`); `mix` also interleaves it into the run's signals as `type: paper`, right after the signal that caused it.
+   */
+  output?: "separate" | "mix";
 };
 
 export type UpdateLiveRequest = {
@@ -1848,6 +1892,10 @@ export type LiveRun = {
   gate?: {
     [key: string]: unknown;
   };
+  /**
+   * The run's paper trading configuration as accepted at start, normalised. Absent when the run has no paper trading.
+   */
+  paper?: LivePaperConfig;
 };
 
 /**
@@ -1943,6 +1991,112 @@ export type LiveSignalPage = {
   _links?: PublicLiveListLinks;
 };
 
+export type LivePaper = {
+  runId: string;
+  stage: "SANDBOX" | "LIVE";
+  accounts: Array<LivePaperAccount>;
+};
+
+/**
+ * One simulated account — one per quote currency the run trades.
+ */
+export type LivePaperAccount = {
+  /**
+   * The account's quote currency; every amount below is in it.
+   */
+  currency: string;
+  initialFunding: number;
+  /**
+   * Latest recorded equity — see `equityKind`.
+   */
+  equity: number;
+  /**
+   * Market time of that value. Absent while the account holds its starting capital.
+   */
+  equityAtMs?: number;
+  /**
+   * `equity` at a closed trade, `mark` at a periodic mark-to-market (includes open positions at market price).
+   */
+  equityKind?: "equity" | "mark";
+  /**
+   * Sum of the PnL of the closed trades.
+   */
+  realisedPnl: number;
+  /**
+   * Closed trades.
+   */
+  trades: number;
+  /**
+   * Times open positions were lost because the run was restarted with them open.
+   */
+  gaps: number;
+  openPositions: Array<LivePaperPosition>;
+  kpi?: LivePaperKpi;
+};
+
+export type LivePaperPosition = {
+  instrument: string;
+  /**
+   * Amount held, in the base asset.
+   */
+  base: number;
+  /**
+   * What it cost, in the account's currency.
+   */
+  cost: number;
+};
+
+/**
+ * The same KPIs a backtest reports, over the trades closed so far. Absent until the first closed trade is recorded.
+ */
+export type LivePaperKpi = {
+  totalTrades?: number;
+  winCount?: number;
+  lossCount?: number;
+  /**
+   * Ratio (0.5 = half the trades won).
+   */
+  winRate?: number;
+  pnlTotal?: number;
+  /**
+   * Percent of `initialFunding` (0-100 scale).
+   */
+  pnlTotalPercent?: number;
+  sharpeRatio?: number | null;
+  sortinoRatio?: number | null;
+  /**
+   * Ratio (0.15 for 15%).
+   */
+  cagr?: number | null;
+  maxDrawdown?: number;
+  /**
+   * Percent (0-100 scale).
+   */
+  maxDrawdownPercent?: number;
+};
+
+export type LivePaperEquityPage = {
+  points: Array<LivePaperEquityPoint>;
+  _links?: {
+    next?: {
+      href?: string;
+    };
+  };
+};
+
+export type LivePaperEquityPoint = {
+  currency: string;
+  kind: "equity" | "mark" | "gap";
+  /**
+   * Market time of the point.
+   */
+  eventTsMs: number;
+  /**
+   * Absent on a `gap`.
+   */
+  equity?: number;
+};
+
 /**
  * One signal, in the same shape the real-time signal channel delivers.
  */
@@ -1964,9 +2118,12 @@ export type LiveSignal = {
    * The parameter set in force when this signal was produced.
    */
   paramsVersion?: number;
-  type: "hint" | "info" | "marker" | "command";
   /**
-   * `BUY`/`SELL` for a `hint`, the command name for a `command`, absent otherwise.
+   * `paper` items appear only for a run whose `paper.output` is `mix`; they are not relayed over the WebSocket channel.
+   */
+  type: "hint" | "info" | "marker" | "command" | "paper";
+  /**
+   * `BUY`/`SELL` for a `hint`, the command name for a `command`; for `paper`, what the item is: `fill`, `trade`, `equity`, `mark`, `kpi` or `gap`. Absent otherwise.
    */
   kind?: string | null;
   /**
@@ -1977,7 +2134,10 @@ export type LiveSignal = {
    * Time it was published — always at or after `eventTsMs`.
    */
   emittedAtMs: number;
-  instrument: LiveSignalInstrument;
+  /**
+   * The instrument the signal is about. `null` only for a `paper` item about a whole account (`equity`, `mark`, `kpi`), whose `data.currency` names the account.
+   */
+  instrument: LiveSignalInstrument | null;
   order?: LiveSignalOrder;
   /**
    * The signal's own free-form payload.
@@ -3451,7 +3611,7 @@ export type StartLiveData = {
 
 export type StartLiveErrors = {
   /**
-   * Malformed `sources` (not exactly one entry, missing field, unsupported `type`), or an invalid `visibility`.
+   * Malformed `sources` (not exactly one entry, missing field, unsupported `type`), an invalid `visibility`, an invalid `paper` block (an unknown field, a wrong type or an out-of-range value), or no `paper` block for a strategy that listens to its own execution events.
    */
   400: ResponseError;
   /**
@@ -3646,6 +3806,10 @@ export type GetLiveRunSignalsData = {
      */
     instrument?: string;
     /**
+     * Narrow to one or more signal types, comma-separated (`hint`, `info`, `marker`, `command`, `paper`). Combines with `instrument`.
+     */
+    type?: string;
+    /**
      * Continue from a previous page's `_links.next`. Takes precedence over `sinceMs`.
      */
     cursor?: string;
@@ -3659,7 +3823,7 @@ export type GetLiveRunSignalsData = {
 
 export type GetLiveRunSignalsErrors = {
   /**
-   * `instrument`, `sinceMs`, `limit` or `cursor` is malformed.
+   * `instrument`, `type`, `sinceMs`, `limit` or `cursor` is malformed.
    */
   400: ResponseError;
   /**
@@ -3684,6 +3848,82 @@ export type GetLiveRunSignalsResponses = {
 
 export type GetLiveRunSignalsResponse =
   GetLiveRunSignalsResponses[keyof GetLiveRunSignalsResponses];
+
+export type GetLiveRunPaperData = {
+  body?: never;
+  path: {
+    runId: string;
+  };
+  query?: never;
+  url: "/live/{runId}/paper";
+};
+
+export type GetLiveRunPaperErrors = {
+  /**
+   * No such run, not one you may read, or a run without paper trading.
+   */
+  404: ResponseError;
+};
+
+export type GetLiveRunPaperError =
+  GetLiveRunPaperErrors[keyof GetLiveRunPaperErrors];
+
+export type GetLiveRunPaperResponses = {
+  /**
+   * The run's paper accounts
+   */
+  200: LivePaper;
+};
+
+export type GetLiveRunPaperResponse =
+  GetLiveRunPaperResponses[keyof GetLiveRunPaperResponses];
+
+export type GetLiveRunPaperEquityData = {
+  body?: never;
+  path: {
+    runId: string;
+  };
+  query?: {
+    /**
+     * One account's quote currency, e.g. `USDT`.
+     */
+    currency?: string;
+    /**
+     * Start from this market time (epoch ms). Ignored when `cursor` is given.
+     */
+    sinceMs?: number;
+    /**
+     * Continue from a previous page's `_links.next`.
+     */
+    cursor?: string;
+    limit?: number;
+  };
+  url: "/live/{runId}/paper/equity";
+};
+
+export type GetLiveRunPaperEquityErrors = {
+  /**
+   * `sinceMs`, `limit` or `cursor` is malformed.
+   */
+  400: ResponseError;
+  /**
+   * No such run, not one you may read, or a run without paper trading.
+   */
+  404: ResponseError;
+};
+
+export type GetLiveRunPaperEquityError =
+  GetLiveRunPaperEquityErrors[keyof GetLiveRunPaperEquityErrors];
+
+export type GetLiveRunPaperEquityResponses = {
+  /**
+   * One page of the curve
+   */
+  200: LivePaperEquityPage;
+};
+
+export type GetLiveRunPaperEquityResponse =
+  GetLiveRunPaperEquityResponses[keyof GetLiveRunPaperEquityResponses];
 
 export type MintLiveConnectionTokenData = {
   body?: never;
