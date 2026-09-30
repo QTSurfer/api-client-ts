@@ -173,6 +173,10 @@ one doesn't.
   required: [
     "userId",
     "tier",
+    "maxExecute",
+    "maxRangeDays",
+    "maxSweepCartesian",
+    "maxImportRangeHours",
     "maxDatasets",
     "maxDatasetBytes",
     "maxTotalStorageBytes",
@@ -189,6 +193,34 @@ one doesn't.
       description: "Your current subscription tier.",
       example: "free",
     },
+    maxExecute: {
+      type: "integer",
+      description: `Maximum number of strategy executions (and sweeps) you can have running at the same time
+through the API. Starting one past this number is answered with \`429\`, whose message
+carries the same number. The value already includes any API allowance your plan has.
+`,
+      example: 10,
+    },
+    maxRangeDays: {
+      type: "integer",
+      description:
+        "Maximum length, in days, of the time range of a backtest on one of your own datasets.",
+      example: 7,
+    },
+    maxSweepCartesian: {
+      type: "integer",
+      description: `Largest full grid, in parameter combinations, a sweep may run with the \`grid\` sampler.
+A grid with more combinations is refused with \`400\`; the \`random\` and \`lhs\` samplers run
+only their \`samples\` and are not held to it.
+`,
+      example: 100,
+    },
+    maxImportRangeHours: {
+      type: "integer",
+      description:
+        "Maximum length, in hours, of the time range of one dataset import from an exchange.",
+      example: 6,
+    },
     maxDatasets: {
       type: "integer",
       description: "Maximum number of active datasets your tier allows.",
@@ -197,7 +229,8 @@ one doesn't.
     maxDatasetBytes: {
       type: "integer",
       format: "int64",
-      description: "Maximum size, in bytes, of a single dataset version.",
+      description:
+        "Maximum size, in bytes, of a single dataset version as stored, that is the `bytes` of its ready version. For a CSV upload that is the converted file, not the file you upload, so estimate from the number of rows. The Datasets guide has the details.",
       example: 52428800,
     },
     maxTotalStorageBytes: {
@@ -776,6 +809,9 @@ export const SweepSpecRequestSchema = {
       type: "string",
       enum: ["grid", "random", "lhs"],
       default: "grid",
+      description: `\`grid\` runs every combination of the axes and is held to your plan's
+\`maxSweepCartesian\` (\`GET /account\`); \`random\` and \`lhs\` run \`samples\` combinations and are not.
+`,
     },
     seed: {
       type: "integer",
@@ -2027,6 +2063,13 @@ not be established without constructing the strategy.
         type: "string",
       },
     },
+    deletedAt: {
+      type: "string",
+      format: "date-time",
+      description: `When you deleted this strategy. Only ever present in \`GET /strategies?includeDeleted=true\`,
+and only on strategies you have deleted.
+`,
+    },
   },
 } as const;
 
@@ -2190,6 +2233,13 @@ bars rather than raw ticks. Purely informational; both shapes are read the same 
 least one upload has finished ingesting.
 `,
       example: "dsv_8e2b4f19c6a03d7e",
+    },
+    deletedAt: {
+      type: "string",
+      format: "date-time",
+      description: `When you deleted this dataset. Only ever present in \`GET /datasets?includeDeleted=true\`,
+and only on datasets you have deleted.
+`,
     },
     updatedAt: {
       type: "string",
@@ -2849,12 +2899,12 @@ export const StartLiveRequestSchema = {
       enum: ["private", "public"],
       default: "private",
       description:
-        "A `public` run appears in `GET /live/public` and its signal channel accepts subscriptions from anyone, not only you.",
+        "A `public` run appears in `GET /live/public` and its signal channel accepts subscriptions from anyone, not only you — from the moment it is promoted to `live`. While it is a `sandbox` trial, `public` is only what you asked for, and only you can read it.",
     },
     relay: {
       type: "boolean",
       default: false,
-      description: `Request that this run's signals be relayed over its WebSocket channel once it reaches the \`live\` stage — see the "Live execution" guide. Has no effect while the run is still in the \`sandbox\` stage, regardless of this value.`,
+      description: `Request that this run's signals be relayed over its WebSocket channel, from its first signal — in the \`sandbox\` stage too, where only you can subscribe to it. See the "Live execution" guide.`,
     },
     name: {
       type: "string",
@@ -2961,6 +3011,23 @@ export const UpdateLiveParamsRequestSchema = {
   },
 } as const;
 
+export const SendLiveCommandRequestSchema = {
+  type: "object",
+  required: ["command"],
+  properties: {
+    command: {
+      type: "string",
+      description: "The command's text — non-blank.",
+    },
+    properties: {
+      type: "object",
+      additionalProperties: true,
+      description:
+        "An optional map of your own choosing, alongside command. Absent means none; when given, it must be a JSON object, and `command` and `properties` are the only keys the body may carry. Each entry lands as a top-level entry on the strategy's `CommandRequest` — no key is off limits, since the command's own text is kept separately.",
+    },
+  },
+} as const;
+
 export const LiveRunSchema = {
   type: "object",
   required: [
@@ -3001,11 +3068,12 @@ export const LiveRunSchema = {
       type: "string",
       enum: ["SANDBOX", "LIVE"],
       description:
-        "A new run always starts `SANDBOX` — a trial run compared against a second execution for agreement — and moves to `LIVE` once it passes.",
+        "A new run always starts `SANDBOX`, a 24-hour trial in which it is compared against a second execution and checked for resource use and stability. A run that passes moves to `LIVE` automatically when the 24 hours are up.",
     },
     state: {
       type: "string",
-      description: `\`STARTING\` until first observed running; otherwise the runner's own reported state (e.g. \`RUNNING\`).`,
+      description:
+        "The run's health right now: `STARTING` (no runner has reported on it yet), `RUNNING`, `LAGGING` (behind the market data, usually while catching up; clears by itself), `HUNG` (stuck inside one strategy call for longer than allowed; clears when it returns), `DEGRADED` (its independent executions produced different signals), `FAILED` (refused, could not start or failed while running; `reason` says why) or `STOPPED`. `LAGGING`, `HUNG` and `DEGRADED` come and go on a running run. The set may grow: read an unknown value as a running run with something to look at. See the Live execution guide.",
     },
     desired: {
       type: "string",
@@ -3015,8 +3083,17 @@ export const LiveRunSchema = {
     },
     reason: {
       type: "string",
-      description:
-        "Present only when the run stopped because it exceeded its resource allowance.",
+      description: `Why the run stopped or failed, when there is something to say; absent otherwise. It is never a
+stack trace or an internal message. Either \`resource: ...\` (the platform stopped the run for
+exceeding its resource allowance; the text says which limit) or one of a fixed set of sentences for
+a \`FAILED\` run: the strategy cannot consume the source type the run was started with, the run's
+definition was refused, the run could not start after several attempts, the strategy failed while
+processing data, the run lost its data feed, or the generic \`The run failed.\`. The set may grow:
+read an unrecognised sentence as a failure and do not parse it. A \`FAILED\` run usually stays
+\`desired: RUNNING\` until you stop it, and counts as active (\`409\` on a new start, and toward your
+live-run limit) until then; one that can never run because its strategy cannot consume its source
+type is stopped by the platform itself (\`desired: STOPPED\`), so it holds no place.
+`,
     },
     sources: {
       type: "array",
@@ -3035,7 +3112,7 @@ export const LiveRunSchema = {
     },
     relay: {
       type: "boolean",
-      description: `Whether this run's signals are being relayed over the WebSocket channel described in the "Live execution" guide, right now. This is the effective value — \`false\` on a \`sandbox\` run regardless of what was requested at start; matches the requested value once \`stage\` reaches \`live\`.`,
+      description: `Whether this run's signals are relayed over the WebSocket channel described in the "Live execution" guide. It is the value requested at start, in either stage.`,
     },
     startedAtMs: {
       type: "integer",
@@ -3046,7 +3123,7 @@ export const LiveRunSchema = {
       type: "object",
       additionalProperties: true,
       description:
-        "The sandbox trial's promotion verdict, once one exists. Shape is not yet stabilized as public API — treat as opaque diagnostics.",
+        "The sandbox trial's promotion verdict. Absent for the whole 24-hour trial and present once it ends, so an absent `gate` means the trial has not finished. `passed` is the verdict; the rest is diagnostic detail whose shape is not yet stabilized as public API: treat it as opaque.",
     },
     paper: {
       allOf: [
@@ -3133,17 +3210,32 @@ export const LiveRunSummarySchema = {
       type: "string",
       enum: ["SANDBOX", "LIVE"],
       description:
-        "A new run always starts `SANDBOX` — a trial run compared against a second execution for agreement — and moves to `LIVE` once it passes.",
+        "A new run always starts `SANDBOX`, a 24-hour trial in which it is compared against a second execution and checked for resource use and stability. A run that passes moves to `LIVE` automatically when the 24 hours are up.",
     },
     state: {
       type: "string",
-      description: `\`STARTING\` until first observed running; otherwise the runner's own reported state (e.g. \`RUNNING\`).`,
+      description:
+        "The run's health right now: `STARTING` (no runner has reported on it yet), `RUNNING`, `LAGGING` (behind the market data, usually while catching up; clears by itself), `HUNG` (stuck inside one strategy call for longer than allowed; clears when it returns), `DEGRADED` (its independent executions produced different signals), `FAILED` (refused, could not start or failed while running; `reason` says why) or `STOPPED`. `LAGGING`, `HUNG` and `DEGRADED` come and go on a running run. The set may grow: read an unknown value as a running run with something to look at. See the Live execution guide.",
     },
     desired: {
       type: "string",
       enum: ["RUNNING", "STOPPED"],
       description:
         "What you last asked for. `state` can lag this briefly after `DELETE`.",
+    },
+    reason: {
+      type: "string",
+      description: `Why the run stopped or failed, when there is something to say; absent otherwise. It is never a
+stack trace or an internal message. Either \`resource: ...\` (the platform stopped the run for
+exceeding its resource allowance; the text says which limit) or one of a fixed set of sentences for
+a \`FAILED\` run: the strategy cannot consume the source type the run was started with, the run's
+definition was refused, the run could not start after several attempts, the strategy failed while
+processing data, the run lost its data feed, or the generic \`The run failed.\`. The set may grow:
+read an unrecognised sentence as a failure and do not parse it. A \`FAILED\` run usually stays
+\`desired: RUNNING\` until you stop it, and counts as active (\`409\` on a new start, and toward your
+live-run limit) until then; one that can never run because its strategy cannot consume its source
+type is stopped by the platform itself (\`desired: STOPPED\`), so it holds no place.
+`,
     },
     sources: {
       type: "array",
@@ -3554,7 +3646,8 @@ export const LiveSignalSchema = {
     data: {
       type: "object",
       additionalProperties: true,
-      description: "The signal's own free-form payload.",
+      description:
+        "The signal's own free-form payload, what the strategy put there with `signal.set(...)`. Whoever may read the run may read it, so on a `public` run it is public. A signal whose `data` is over 8 KiB (8,192 bytes of its JSON) is not pushed on the WebSocket channel, and `GET /live/{runId}/signals` returns it whole.",
     },
     regenerated: {
       type: "boolean",
@@ -3637,6 +3730,27 @@ export const LiveParamsUpdateResultSchema = {
       format: "int64",
       description:
         "Epoch milliseconds — the earliest moment the new values are guaranteed to be in effect.",
+    },
+  },
+} as const;
+
+export const LiveCommandResultSchema = {
+  type: "object",
+  required: ["runId", "commandId", "effectiveAtMs"],
+  properties: {
+    runId: {
+      type: "string",
+    },
+    commandId: {
+      type: "string",
+      description:
+        "This command's own id, generated fresh for this call. A retried request is a second, distinct command — this endpoint takes no idempotency key.",
+    },
+    effectiveAtMs: {
+      type: "integer",
+      format: "int64",
+      description:
+        "Epoch milliseconds — the market position every execution applies this command at.",
     },
   },
 } as const;

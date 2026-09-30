@@ -1,5 +1,11 @@
 # @qtsurfer/api-client
 
+## 0.20.0
+
+### Minor Changes
+
+- Add `sendLiveCommand` to deliver commands to running strategies without restarting them, and let `listStrategies` and `listDatasets` include soft-deleted entries with `includeDeleted`. `getAccount` now exposes `maxSweepCartesian`, the plan limit for full-grid sweeps; generated models also report deletion times and live-run stop reasons (OpenAPI 0.128.14).
+
 ## 0.19.0
 
 ### Minor Changes

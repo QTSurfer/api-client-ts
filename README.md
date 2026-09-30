@@ -68,21 +68,21 @@ pluggable token stores so callers don't reinvent that plumbing.
 
 All operations are exported as standalone functions; every operation accepts an `Options` object and returns `{ data, error, response }`.
 
-The table is exhaustive: `src/generated/` is produced from the OpenAPI spec, so **all 44 operations**
-the spec declares are exported. The rows below describe **spec version 0.127.0**, which is versioned
+The table is exhaustive: `src/generated/` is produced from the OpenAPI spec, so **all 45 operations**
+the spec declares are exported. The rows below describe **spec version 0.128.14**, which is versioned
 independently of this package.
 
 | Function | Method | Path | Purpose |
 | -------- | ------ | ---- | ------- |
 | `authenticate` | POST | `/auth/token` | Exchange an API key for a short-lived JWT |
-| `getAccount` | GET | `/account` | Read the authenticated account tier and limits |
+| `getAccount` | GET | `/account` | Read the authenticated account tier and limits, including the full-grid sweep limit |
 | `getAccountUsage` | GET | `/account/usage` | Read current resource and storage use |
 | `listExchanges` | GET | `/exchanges` | List the available exchanges |
 | `listInstruments` | GET | `/exchange/{exchangeId}/instruments` | List an exchange's instruments (default spot segment) |
 | `listSegmentInstruments` | GET | `/exchange/{exchangeId}/{segment}/instruments` | List an exchange segment's instruments |
 | `downloadTickers` | GET | `/exchange/{exchangeId}/tickers/{base}/{quote}` | Download one hour of tickers as a Lastra segment |
 | `downloadKlines` | GET | `/exchange/{exchangeId}/klines/{base}/{quote}` | Download one hour of klines as a Lastra segment |
-| `listStrategies` | GET | `/strategies` | List your registered strategies, most recently compiled first |
+| `listStrategies` | GET | `/strategies` | List your registered strategies, optionally including deleted strategies and their deletion times |
 | `compileStrategy` | POST | `/strategy` | Compile and register a strategy |
 | `validateStrategy` | POST | `/strategy/{strategyId}/validate` | Check that a registered strategy can actually run |
 | `getStrategy` | GET | `/strategy/{strategyId}` | Get a strategy by id, including its validation state |
@@ -98,7 +98,7 @@ independently of this package.
 | `executeBacktest` | POST | `/backtest/{exchangeId}/{type}/execute` | Execute a compiled strategy against a prepared dataset |
 | `cancelBacktest` | DELETE | `/backtest/{exchangeId}/{type}/execute/{jobId}` | Cancel a running backtest execution |
 | `getBacktestResult` | GET | `/backtest/{exchangeId}/{type}/execute/{jobId}` | Get the result of a backtest execution job |
-| `listDatasets` | GET | `/datasets` | List your datasets |
+| `listDatasets` | GET | `/datasets` | List your datasets, optionally including deleted datasets and their deletion times |
 | `createDataset` | POST | `/datasets` | Create a dataset and obtain its first upload session |
 | `deleteDataset` | DELETE | `/datasets/{datasetId}` | Soft-delete a dataset |
 | `getDataset` | GET | `/datasets/{datasetId}` | Get dataset metadata |
@@ -114,12 +114,28 @@ independently of this package.
 | `listPublicLive` | GET | `/live/public` | Page publicly visible live runs |
 | `updateLive` | PATCH | `/live/{runId}` | Change a run's visibility, name, or description |
 | `updateLiveParams` | PUT | `/live/{runId}/params` | Change parameters while a run stays active |
+| `sendLiveCommand` | POST | `/live/{runId}/commands` | Send a command to a running strategy without restarting it |
 | `getLiveRunSignals` | GET | `/live/{runId}/signals` | Page retained signals by time, instrument, or signal type (`paper` items only when output is `mix`) |
 | `getLiveRunPaper` | GET | `/live/{runId}/paper` | Read simulated accounts, open positions, equity, and KPIs for a paper-trading run |
 | `getLiveRunPaperEquity` | GET | `/live/{runId}/paper/equity` | Page the run's retained paper equity curve, optionally by quote currency or start time |
 | `mintLiveConnectionToken` | POST | `/live/token` | Mint a short-lived Centrifugo connection token |
 
-All generated types (`Exchange`, `InstrumentDetail`, `BacktestJobResult`, `PrepareJobState`, `ResultMap`, `LivePaper`, `LivePaperAccount`, `LivePaperEquityPage`, etc.) are re-exported from the root.
+All generated types (`Exchange`, `InstrumentDetail`, `BacktestJobResult`, `PrepareJobState`, `ResultMap`, `LivePaper`, `LivePaperAccount`, `LivePaperEquityPage`, `SendLiveCommandRequest`, `LiveCommandResult`, etc.) are re-exported from the root.
+
+`sendLiveCommand` sends a command to every execution behind an owned live run. The strategy must
+implement the engine's `CommandRequestHandler`; `202` means the command was accepted, not that the
+strategy has completed handling it:
+
+```ts
+import { sendLiveCommand } from '@qtsurfer/api-client';
+
+const { data, error } = await sendLiveCommand({
+  path: { runId },
+  body: { command: 'flatten', properties: { instrument: 'BTC/USDT' } },
+});
+if (error) throw error;
+console.log(data.commandId, data.effectiveAtMs);
+```
 
 ## Configuring the client
 

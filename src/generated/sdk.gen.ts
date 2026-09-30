@@ -121,6 +121,9 @@ import type {
   UpdateLiveParamsData,
   UpdateLiveParamsResponse,
   UpdateLiveParamsError,
+  SendLiveCommandData,
+  SendLiveCommandResponse,
+  SendLiveCommandError,
   GetLiveRunSignalsData,
   GetLiveRunSignalsResponse,
   GetLiveRunSignalsError,
@@ -374,6 +377,10 @@ export const downloadKlines = <ThrowOnError extends boolean = false>(
  * many strategies you have. Check a specific strategy's validation with `GET
  * /strategy/{strategyId}`.
  *
+ * With `includeDeleted=true`, strategies you have deleted are listed too, each with the
+ * `deletedAt` it was deleted at — useful to keep a copy of your list in sync, telling a
+ * deleted strategy apart from one that never existed.
+ *
  */
 export const listStrategies = <ThrowOnError extends boolean = false>(
   options?: Options<ListStrategiesData, ThrowOnError>
@@ -410,6 +417,11 @@ export const listStrategies = <ThrowOnError extends boolean = false>(
  * `POST /strategy/{strategyId}/validate`, and everything known about a strategy, validation
  * included, is read from `GET /strategy/{strategyId}`. One place to ask, so there is no second
  * answer to keep in step.
+ *
+ * A `200` means the source parsed and compiled, not that it will run. What only shows once the
+ * strategy sets up its indicators is found by `validate`: for QTScript, a window on an indicator
+ * name that is not registered (`window nosuch m1 { ... }`) registers, and `validate` ends `failed`
+ * on that line.
  *
  * For **Java**, the `strategyId` is derived from what the code *means*, not from how it is
  * written. Adding a comment, inserting a blank line, re-indenting, reordering imports, or
@@ -976,6 +988,10 @@ export const getBacktestResult = <ThrowOnError extends boolean = false>(
  * Every dataset you have created and not deleted, most recently created first. Never a `404`
  * — an empty array if you have none, same convention as `GET /strategies`.
  *
+ * With `includeDeleted=true`, datasets you have deleted are listed too, each with the
+ * `deletedAt` it was deleted at — useful to keep a copy of your list in sync, telling a
+ * deleted dataset apart from one that never existed.
+ *
  */
 export const listDatasets = <ThrowOnError extends boolean = false>(
   options?: Options<ListDatasetsData, ThrowOnError>
@@ -1408,8 +1424,9 @@ export const listLive = <ThrowOnError extends boolean = false>(
 
 /**
  * Browse public live runs
- * Every run whose owner marked it `public` and is currently live and running — anyone's,
- * yours included, and listed without revealing who owns it. Most recently started first.
+ * Every run whose owner marked it `public`, that has been promoted to `live` and is running —
+ * anyone's, yours included, and listed without revealing who owns it. A `public` run still in
+ * its `sandbox` trial is not listed. Most recently started first.
  *
  * This is the only `Live Execution` endpoint that needs no `Authorization` header.
  *
@@ -1499,6 +1516,46 @@ export const updateLiveParams = <ThrowOnError extends boolean = false>(
 };
 
 /**
+ * Tell a running strategy a command
+ * Tells a running strategy something **while it stays live**, without restarting it — for a strategy that
+ * implements the engine's `CommandRequestHandler`. Owner only.
+ *
+ * A command is an event, not a stored setting: it is delivered once to every execution behind the run, at
+ * the same market position, and nothing about it is written to the run's state. **It is transient** — a
+ * replica that restarts replays only its recent market history, so a command from before that only reaches
+ * one that was already running when it arrived. Anything the strategy needs to remember across a restart
+ * belongs in a parameter (`PUT /live/{runId}/params`), which does have a stored value; a command does not.
+ *
+ * The command's text is a plain string; an optional `properties` object of your own choosing travels
+ * alongside it. Each entry lands as a top-level entry on the `CommandRequest` the handler receives —
+ * `request.get("<key>")` in Java, `$command.<key>` sugar in QTScript — no key is off limits, since the
+ * command's own text is kept separately.
+ *
+ */
+export const sendLiveCommand = <ThrowOnError extends boolean = false>(
+  options: Options<SendLiveCommandData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).post<
+    SendLiveCommandResponse,
+    SendLiveCommandError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/live/{runId}/commands",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  });
+};
+
+/**
  * Read a run's signals
  * Returns one page of the signals a run has already produced, newest-last, optionally from a
  * given time and narrowed to one or more instruments.
@@ -1521,8 +1578,9 @@ export const updateLiveParams = <ThrowOnError extends boolean = false>(
  * serving a shortened page that looks complete. Treat that as a normal outcome: read
  * `availableSinceMs` from the error and start again from there.
  *
- * Readable by the run's owner, and by anyone if the run is `public` — the same rule the
- * signal channel applies to a subscription.
+ * Readable by the run's owner, and by anyone if the run is `public` and has reached the `live`
+ * stage — the same rule the signal channel applies to a subscription. A `sandbox` run is read
+ * by its owner only, whatever visibility it asked for.
  *
  */
 export const getLiveRunSignals = <ThrowOnError extends boolean = false>(
@@ -1556,8 +1614,8 @@ export const getLiveRunSignals = <ThrowOnError extends boolean = false>(
  * mark`, taken every minute of market time). Until either exists the account holds its
  * starting capital.
  *
- * Readable by the run's owner, and by anyone if the run is `public`. A run started without
- * a `paper` block answers `404`.
+ * Readable by the run's owner, and by anyone if the run is `public` and has reached the `live`
+ * stage. A run started without a `paper` block answers `404`.
  *
  */
 export const getLiveRunPaper = <ThrowOnError extends boolean = false>(
@@ -1590,7 +1648,8 @@ export const getLiveRunPaper = <ThrowOnError extends boolean = false>(
  * `currency` narrows to one account; without it, every account's points come interleaved by
  * time, each carrying its currency.
  *
- * Readable by the run's owner, and by anyone if the run is `public`.
+ * Readable by the run's owner, and by anyone if the run is `public` and has reached the `live`
+ * stage.
  *
  */
 export const getLiveRunPaperEquity = <ThrowOnError extends boolean = false>(

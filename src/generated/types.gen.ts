@@ -120,11 +120,33 @@ export type Account = {
    */
   tier: string;
   /**
+   * Maximum number of strategy executions (and sweeps) you can have running at the same time
+   * through the API. Starting one past this number is answered with `429`, whose message
+   * carries the same number. The value already includes any API allowance your plan has.
+   *
+   */
+  maxExecute: number;
+  /**
+   * Maximum length, in days, of the time range of a backtest on one of your own datasets.
+   */
+  maxRangeDays: number;
+  /**
+   * Largest full grid, in parameter combinations, a sweep may run with the `grid` sampler.
+   * A grid with more combinations is refused with `400`; the `random` and `lhs` samplers run
+   * only their `samples` and are not held to it.
+   *
+   */
+  maxSweepCartesian: number;
+  /**
+   * Maximum length, in hours, of the time range of one dataset import from an exchange.
+   */
+  maxImportRangeHours: number;
+  /**
    * Maximum number of active datasets your tier allows.
    */
   maxDatasets: number;
   /**
-   * Maximum size, in bytes, of a single dataset version.
+   * Maximum size, in bytes, of a single dataset version as stored, that is the `bytes` of its ready version. For a CSV upload that is the converted file, not the file you upload, so estimate from the number of rows. The Datasets guide has the details.
    */
   maxDatasetBytes: number;
   /**
@@ -512,6 +534,11 @@ export type SweepAxis =
     };
 
 export type SweepSpecRequest = {
+  /**
+   * `grid` runs every combination of the axes and is held to your plan's
+   * `maxSweepCartesian` (`GET /account`); `random` and `lhs` run `samples` combinations and are not.
+   *
+   */
   sampler?: "grid" | "random" | "lhs";
   /**
    * Reproducibility seed. If omitted, the server generates one with Java's
@@ -1208,6 +1235,12 @@ export type StrategySummary = {
    *
    */
   requiredSources?: Array<string>;
+  /**
+   * When you deleted this strategy. Only ever present in `GET /strategies?includeDeleted=true`,
+   * and only on strategies you have deleted.
+   *
+   */
+  deletedAt?: string;
 };
 
 /**
@@ -1321,6 +1354,12 @@ export type Dataset = {
    *
    */
   currentVersionId?: string;
+  /**
+   * When you deleted this dataset. Only ever present in `GET /datasets?includeDeleted=true`,
+   * and only on datasets you have deleted.
+   *
+   */
+  deletedAt?: string;
   /**
    * When `currentVersionId` last changed. Absent until it has a value.
    */
@@ -1775,11 +1814,11 @@ export type StartLiveRequest = {
     [key: string]: unknown;
   };
   /**
-   * A `public` run appears in `GET /live/public` and its signal channel accepts subscriptions from anyone, not only you.
+   * A `public` run appears in `GET /live/public` and its signal channel accepts subscriptions from anyone, not only you — from the moment it is promoted to `live`. While it is a `sandbox` trial, `public` is only what you asked for, and only you can read it.
    */
   visibility?: "private" | "public";
   /**
-   * Request that this run's signals be relayed over its WebSocket channel once it reaches the `live` stage — see the "Live execution" guide. Has no effect while the run is still in the `sandbox` stage, regardless of this value.
+   * Request that this run's signals be relayed over its WebSocket channel, from its first signal — in the `sandbox` stage too, where only you can subscribe to it. See the "Live execution" guide.
    */
   relay?: boolean;
   name?: string;
@@ -1842,6 +1881,19 @@ export type UpdateLiveParamsRequest = {
   };
 };
 
+export type SendLiveCommandRequest = {
+  /**
+   * The command's text — non-blank.
+   */
+  command: string;
+  /**
+   * An optional map of your own choosing, alongside command. Absent means none; when given, it must be a JSON object, and `command` and `properties` are the only keys the body may carry. Each entry lands as a top-level entry on the strategy's `CommandRequest` — no key is off limits, since the command's own text is kept separately.
+   */
+  properties?: {
+    [key: string]: unknown;
+  };
+};
+
 /**
  * A live run's full state, as returned by starting, reading, or stopping it through its strategy.
  */
@@ -1855,11 +1907,11 @@ export type LiveRun = {
   description?: string;
   visibility: "private" | "public";
   /**
-   * A new run always starts `SANDBOX` — a trial run compared against a second execution for agreement — and moves to `LIVE` once it passes.
+   * A new run always starts `SANDBOX`, a 24-hour trial in which it is compared against a second execution and checked for resource use and stability. A run that passes moves to `LIVE` automatically when the 24 hours are up.
    */
   stage: "SANDBOX" | "LIVE";
   /**
-   * `STARTING` until first observed running; otherwise the runner's own reported state (e.g. `RUNNING`).
+   * The run's health right now: `STARTING` (no runner has reported on it yet), `RUNNING`, `LAGGING` (behind the market data, usually while catching up; clears by itself), `HUNG` (stuck inside one strategy call for longer than allowed; clears when it returns), `DEGRADED` (its independent executions produced different signals), `FAILED` (refused, could not start or failed while running; `reason` says why) or `STOPPED`. `LAGGING`, `HUNG` and `DEGRADED` come and go on a running run. The set may grow: read an unknown value as a running run with something to look at. See the Live execution guide.
    */
   state: string;
   /**
@@ -1867,7 +1919,17 @@ export type LiveRun = {
    */
   desired: "RUNNING" | "STOPPED";
   /**
-   * Present only when the run stopped because it exceeded its resource allowance.
+   * Why the run stopped or failed, when there is something to say; absent otherwise. It is never a
+   * stack trace or an internal message. Either `resource: ...` (the platform stopped the run for
+   * exceeding its resource allowance; the text says which limit) or one of a fixed set of sentences for
+   * a `FAILED` run: the strategy cannot consume the source type the run was started with, the run's
+   * definition was refused, the run could not start after several attempts, the strategy failed while
+   * processing data, the run lost its data feed, or the generic `The run failed.`. The set may grow:
+   * read an unrecognised sentence as a failure and do not parse it. A `FAILED` run usually stays
+   * `desired: RUNNING` until you stop it, and counts as active (`409` on a new start, and toward your
+   * live-run limit) until then; one that can never run because its strategy cannot consume its source
+   * type is stopped by the platform itself (`desired: STOPPED`), so it holds no place.
+   *
    */
   reason?: string;
   sources: Array<LiveSource>;
@@ -1879,7 +1941,7 @@ export type LiveRun = {
    */
   paramsVersion: number;
   /**
-   * Whether this run's signals are being relayed over the WebSocket channel described in the "Live execution" guide, right now. This is the effective value — `false` on a `sandbox` run regardless of what was requested at start; matches the requested value once `stage` reaches `live`.
+   * Whether this run's signals are relayed over the WebSocket channel described in the "Live execution" guide. It is the value requested at start, in either stage.
    */
   relay: boolean;
   /**
@@ -1887,7 +1949,7 @@ export type LiveRun = {
    */
   startedAtMs: number;
   /**
-   * The sandbox trial's promotion verdict, once one exists. Shape is not yet stabilized as public API — treat as opaque diagnostics.
+   * The sandbox trial's promotion verdict. Absent for the whole 24-hour trial and present once it ends, so an absent `gate` means the trial has not finished. `passed` is the verdict; the rest is diagnostic detail whose shape is not yet stabilized as public API: treat it as opaque.
    */
   gate?: {
     [key: string]: unknown;
@@ -1924,17 +1986,31 @@ export type LiveRunSummary = {
   description?: string;
   visibility: "private" | "public";
   /**
-   * A new run always starts `SANDBOX` — a trial run compared against a second execution for agreement — and moves to `LIVE` once it passes.
+   * A new run always starts `SANDBOX`, a 24-hour trial in which it is compared against a second execution and checked for resource use and stability. A run that passes moves to `LIVE` automatically when the 24 hours are up.
    */
   stage: "SANDBOX" | "LIVE";
   /**
-   * `STARTING` until first observed running; otherwise the runner's own reported state (e.g. `RUNNING`).
+   * The run's health right now: `STARTING` (no runner has reported on it yet), `RUNNING`, `LAGGING` (behind the market data, usually while catching up; clears by itself), `HUNG` (stuck inside one strategy call for longer than allowed; clears when it returns), `DEGRADED` (its independent executions produced different signals), `FAILED` (refused, could not start or failed while running; `reason` says why) or `STOPPED`. `LAGGING`, `HUNG` and `DEGRADED` come and go on a running run. The set may grow: read an unknown value as a running run with something to look at. See the Live execution guide.
    */
   state: string;
   /**
    * What you last asked for. `state` can lag this briefly after `DELETE`.
    */
   desired: "RUNNING" | "STOPPED";
+  /**
+   * Why the run stopped or failed, when there is something to say; absent otherwise. It is never a
+   * stack trace or an internal message. Either `resource: ...` (the platform stopped the run for
+   * exceeding its resource allowance; the text says which limit) or one of a fixed set of sentences for
+   * a `FAILED` run: the strategy cannot consume the source type the run was started with, the run's
+   * definition was refused, the run could not start after several attempts, the strategy failed while
+   * processing data, the run lost its data feed, or the generic `The run failed.`. The set may grow:
+   * read an unrecognised sentence as a failure and do not parse it. A `FAILED` run usually stays
+   * `desired: RUNNING` until you stop it, and counts as active (`409` on a new start, and toward your
+   * live-run limit) until then; one that can never run because its strategy cannot consume its source
+   * type is stopped by the platform itself (`desired: STOPPED`), so it holds no place.
+   *
+   */
+  reason?: string;
   sources: Array<LiveSource>;
   /**
    * Epoch milliseconds this run was started.
@@ -2140,7 +2216,7 @@ export type LiveSignal = {
   instrument: LiveSignalInstrument | null;
   order?: LiveSignalOrder;
   /**
-   * The signal's own free-form payload.
+   * The signal's own free-form payload, what the strategy put there with `signal.set(...)`. Whoever may read the run may read it, so on a `public` run it is public. A signal whose `data` is over 8 KiB (8,192 bytes of its JSON) is not pushed on the WebSocket channel, and `GET /live/{runId}/signals` returns it whole.
    */
   data?: {
     [key: string]: unknown;
@@ -2188,6 +2264,18 @@ export type LiveParamsUpdateResult = {
   paramsVersion: number;
   /**
    * Epoch milliseconds — the earliest moment the new values are guaranteed to be in effect.
+   */
+  effectiveAtMs: number;
+};
+
+export type LiveCommandResult = {
+  runId: string;
+  /**
+   * This command's own id, generated fresh for this call. A retried request is a second, distinct command — this endpoint takes no idempotency key.
+   */
+  commandId: string;
+  /**
+   * Epoch milliseconds — the market position every execution applies this command at.
    */
   effectiveAtMs: number;
 };
@@ -2473,7 +2561,14 @@ export type DownloadKlinesResponse =
 export type ListStrategiesData = {
   body?: never;
   path?: never;
-  query?: never;
+  query?: {
+    /**
+     * `true` also lists the strategies you have deleted, each with its `deletedAt`. Any other
+     * value, or leaving it out, lists only the ones you have not deleted.
+     *
+     */
+    includeDeleted?: boolean;
+  };
   url: "/strategies";
 };
 
@@ -2508,6 +2603,10 @@ export type CompileStrategyErrors = {
    *
    */
   400: ResponseError;
+  /**
+   * The source is larger than 32 KiB (32768 bytes). Every endpoint that reads a request body caps it, and the message names the cap; see the Strategy guide.
+   */
+  413: ResponseError;
   /**
    * Too many compilations in flight. Retry later.
    */
@@ -2807,7 +2906,9 @@ export type ExecuteSweepData = {
 export type ExecuteSweepErrors = {
   /**
    * Invalid sweep specification, a `type` that cannot be swept yet (`funding`), or the
-   * expanded grid exceeds the server limit.
+   * expanded grid exceeds the server limit. A full `grid` with more combinations than your
+   * plan allows (`maxSweepCartesian` in `GET /account`) is refused with a message that asks
+   * for the `random` or `lhs` sampler.
    *
    */
   400: ResponseError;
@@ -3202,7 +3303,14 @@ export type GetBacktestResultResponse =
 export type ListDatasetsData = {
   body?: never;
   path?: never;
-  query?: never;
+  query?: {
+    /**
+     * `true` also lists the datasets you have deleted, each with its `deletedAt`. Any other
+     * value, or leaving it out, lists only the ones you have not deleted.
+     *
+     */
+    includeDeleted?: boolean;
+  };
   url: "/datasets";
 };
 
@@ -3388,7 +3496,7 @@ export type FinalizeDatasetUploadErrors = {
    */
   409: ResponseError;
   /**
-   * The uploaded file exceeds your tier's size limit for a dataset.
+   * The uploaded file is many times your tier's size limit for a dataset. The limit itself applies to the stored size, which is known only after conversion, so an upload that passes here can still end `failed` when ingest finishes.
    */
   413: ResponseError;
   /**
@@ -3611,7 +3719,7 @@ export type StartLiveData = {
 
 export type StartLiveErrors = {
   /**
-   * Malformed `sources` (not exactly one entry, missing field, unsupported `type`), an invalid `visibility`, an invalid `paper` block (an unknown field, a wrong type or an out-of-range value), or no `paper` block for a strategy that listens to its own execution events.
+   * Malformed `sources` (not exactly one entry, missing field, unsupported `type`), a `type` the strategy cannot consume (a ticker strategy with a `kline` source, or the reverse; the message names both), an invalid `visibility`, an invalid `paper` block (an unknown field, a wrong type or an out-of-range value), or no `paper` block for a strategy that listens to its own execution events.
    */
   400: ResponseError;
   /**
@@ -3765,7 +3873,7 @@ export type UpdateLiveParamsErrors = {
    */
   404: ResponseError;
   /**
-   * This run's compilation has no declared properties on record — recompile the strategy to enable runtime parameter updates.
+   * This run's compiled strategy has no record of the parameters it declares. Register the strategy again with `POST /strategy` and start a new run, since a run keeps the compiled version it started with.
    */
   409: ResponseError;
 };
@@ -3782,6 +3890,55 @@ export type UpdateLiveParamsResponses = {
 
 export type UpdateLiveParamsResponse =
   UpdateLiveParamsResponses[keyof UpdateLiveParamsResponses];
+
+export type SendLiveCommandData = {
+  body: SendLiveCommandRequest;
+  path: {
+    runId: string;
+  };
+  query?: never;
+  url: "/live/{runId}/commands";
+};
+
+export type SendLiveCommandErrors = {
+  /**
+   * `command` missing, not a string, blank; `properties` given but not an object; or the body carries any key other than `command` and `properties`.
+   */
+  400: ResponseError;
+  /**
+   * No such run, or you do not own it.
+   */
+  404: ResponseError;
+  /**
+   * One of three reasons, each its own message: the run is not running, so there is nothing to tell;
+   * this run's compiled strategy has no record of whether it handles commands — register the strategy
+   * again with `POST /strategy` and start a new run, since a run keeps the compiled version it started
+   * with; or the strategy does not implement `CommandRequestHandler` at all.
+   *
+   */
+  409: ResponseError;
+  /**
+   * The request body is larger than 2 KiB (2048 bytes). Every endpoint that reads a request body caps it, and the message names the cap.
+   */
+  413: ResponseError;
+  /**
+   * The command could not be delivered right now, and it was not sent — unlike a parameter update, a command has no fallback path. Try again.
+   */
+  503: ResponseError;
+};
+
+export type SendLiveCommandError =
+  SendLiveCommandErrors[keyof SendLiveCommandErrors];
+
+export type SendLiveCommandResponses = {
+  /**
+   * Accepted — on its way to every execution behind the run.
+   */
+  202: LiveCommandResult;
+};
+
+export type SendLiveCommandResponse =
+  SendLiveCommandResponses[keyof SendLiveCommandResponses];
 
 export type GetLiveRunSignalsData = {
   body?: never;
