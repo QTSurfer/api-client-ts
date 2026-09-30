@@ -30,7 +30,7 @@ npm install @qtsurfer/api-client
 import { client, listExchanges, prepareBacktest } from '@qtsurfer/api-client';
 
 client.setConfig({
-  baseUrl: 'https://api.qtsurfer.com/v1',
+  baseUrl: 'https://api.qtsurfer.net/v1', // Staging beta server
   headers: {
     Authorization: `Bearer ${process.env.QTSURFER_TOKEN}`,
   },
@@ -51,7 +51,7 @@ Exchange a long-lived API key for one via `authenticate`:
 import { authenticate } from '@qtsurfer/api-client';
 
 const { data, error } = await authenticate({
-  baseUrl: 'https://api.qtsurfer.com/v1',
+  baseUrl: 'https://api.qtsurfer.net/v1', // Staging beta server
   headers: { 'X-API-Key': process.env.QTSURFER_APIKEY! },
 });
 if (error) throw error;
@@ -130,12 +130,12 @@ import { client, listExchanges } from '@qtsurfer/api-client';
 
 // Global
 client.setConfig({
-  baseUrl: 'https://api.qtsurfer.com/v1',
+  baseUrl: 'https://api.qtsurfer.net/v1', // Staging beta server
 });
 
 // Per-call
 await listExchanges({
-  baseUrl: 'https://api.qtsurfer.com/v1',
+  baseUrl: 'https://api.qtsurfer.net/v1', // Staging beta server
   headers: { 'X-Request-Id': '...' },
 });
 ```
