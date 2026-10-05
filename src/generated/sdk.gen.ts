@@ -1387,6 +1387,14 @@ export const getLive = <ThrowOnError extends boolean = false>(
  * (it overrides `getExecutionCallback()`) has no other execution venue, so it cannot start
  * without a `paper` block.
  *
+ * **Warming up.** Pass `warmFrom` to choose how many seconds before its start the run replays the market
+ * feed from, so that its indicators and windows have history when the first live tick arrives. `0` replays
+ * nothing: the run delivers its first signal as soon as it is running, but its indicators start empty and the
+ * first bar of a window can be partial. Omitted, the platform replays from the start of the current 15-minute
+ * block, which is between 0 and 900 seconds before the run's start, so the first bar of a 15-minute window is
+ * complete. The value in effect, yours or the platform's, comes back as `warmFrom`. It can be set only here,
+ * when the run is started. See the "Live execution" guide, "Warming up".
+ *
  * **A plain WebSocket stream.** Pass `stream: true` to get a secret URL for this run's signals that a simple
  * client, or a service that passes them on to others, can open as an ordinary WebSocket, from the sandbox stage
  * on. The URL is in the response (`streamUrl`) and in `GET /strategy/{strategyId}/live`; treat it like a

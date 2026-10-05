@@ -69,7 +69,7 @@ pluggable token stores so callers don't reinvent that plumbing.
 All operations are exported as standalone functions; every operation accepts an `Options` object and returns `{ data, error, response }`.
 
 The table is exhaustive: `src/generated/` is produced from the OpenAPI spec, so **all 48 operations**
-the spec declares are exported. The rows below describe **spec version 0.128.17**, which is versioned
+the spec declares are exported. The rows below describe **spec version 0.128.20**, which is versioned
 independently of this package.
 
 | Function | Method | Path | Purpose |
@@ -107,7 +107,7 @@ independently of this package.
 | `getDatasetUpload` | GET | `/datasets/{datasetId}/uploads/{uploadId}` | Get an upload's ingestion state |
 | `importDataset` | POST | `/datasets/imports` | Create a dataset by importing external history |
 | `getDatasetImport` | GET | `/datasets/{datasetId}/imports/{importId}` | Get an import's fetch and ingestion state |
-| `startLive` | POST | `/strategy/{strategyId}/live` | Start a compiled strategy on a live feed; optionally simulate fills and equity with `paper`, or request a plain WebSocket stream URL |
+| `startLive` | POST | `/strategy/{strategyId}/live` | Start a compiled strategy on a live feed; optionally set its warm-up replay window with `warmFrom`, simulate fills and equity with `paper`, or request a plain WebSocket stream URL |
 | `getLive` | GET | `/strategy/{strategyId}/live` | Read a strategy's current or most recent live run |
 | `stopLive` | DELETE | `/strategy/{strategyId}/live` | Request a strategy's active live run to stop |
 | `listLive` | GET | `/live` | Page all live runs owned by the authenticated account |

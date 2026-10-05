@@ -1,5 +1,11 @@
 # @qtsurfer/api-client
 
+## 0.22.0
+
+### Minor Changes
+
+- Add `warmFrom` to live-run start requests and the start/current-run/detail responses. It is optional, never nullable, and absent only on historical runs started before the field existed (OpenAPI 0.128.20).
+
 ## 0.21.0
 
 ### Minor Changes

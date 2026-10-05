@@ -2917,6 +2917,23 @@ broadcast; any other plan gets \`429\`. It can be asked for **only when the run 
 later), and it also turns \`relay\` on. See the "Live execution" guide, "A plain WebSocket stream of a run".
 `,
     },
+    warmFrom: {
+      type: "integer",
+      minimum: 0,
+      maximum: 3600,
+      description: `How many seconds before the run's start to replay the market feed from, so the strategy's indicators and
+windows have history when its first live tick arrives. \`0\` replays nothing: the run delivers its first
+signal as soon as it is running, but its indicators start empty and the first bar of a window can be
+partial. Omitted, the platform replays from the start of the current 15-minute block: between 0 and 900
+seconds before the run's start, depending on when it starts (0 if it starts exactly on a quarter hour),
+so the first bar of a 15-minute window is complete. The value in effect, the one you sent or the one the
+platform chose, is reported back as \`warmFrom\` on the run. Signals about the replayed time
+are not pushed on the run's channel or stream: they describe events from before the run started.
+It can be set **only when the run is started**: it is not a parameter of \`PUT /live/{runId}/params\`, and
+changing it means stopping the run and starting it again. Anything that is not an integer from 0 to 3600
+is \`400\`. See the "Live execution" guide, "Warming up".
+`,
+    },
     name: {
       type: "string",
     },
@@ -3055,7 +3072,7 @@ export const LiveRunSchema = {
     "startedAtMs",
   ],
   description:
-    "A live run's full state, as returned by starting, reading, or stopping it through its strategy.",
+    "A live run's full state, as returned by stopping it through its strategy, and the base of the representations returned by starting and by reading it. `warmFrom` is declared by those two (`LiveRunWithStream` and `LiveRunDetail`) and not here, because the response to stopping a run does not carry it.",
   properties: {
     strategyId: {
       $ref: "#/components/schemas/strategyId",
@@ -3207,6 +3224,14 @@ worth checking against \`state\`. \`false\` otherwise. A run whose \`processed\`
   },
 } as const;
 
+export const WarmFromSchema = {
+  type: "integer",
+  minimum: 0,
+  maximum: 3600,
+  description:
+    "The `warmFrom` in effect for this run, in seconds: the one requested when the run was started or, when none was, the one the platform chose (the distance from the run's start back to the start of the current 15-minute block, 0 to 900). It is never `null`. It is present on every run started since the field exists and absent from a run started before it existed. It never changes while the run exists.",
+} as const;
+
 export const LiveRunDetailSchema = {
   description:
     "A run as returned by `GET /live/{runId}`, the full state of `LiveRun` plus when it last changed.",
@@ -3218,6 +3243,9 @@ export const LiveRunDetailSchema = {
       type: "object",
       required: ["updatedAtMs"],
       properties: {
+        warmFrom: {
+          $ref: "#/components/schemas/WarmFrom",
+        },
         updatedAtMs: {
           type: "integer",
           format: "int64",
@@ -3230,9 +3258,9 @@ export const LiveRunDetailSchema = {
 } as const;
 
 export const LiveRunWithStreamSchema = {
-  description: `A run as \`LiveRun\` describes it, plus its \`streamUrl\` when it has one. It is what **starting a run** and
+  description: `A run as \`LiveRun\` describes it, plus its \`warmFrom\` (absent only for a run started before the field existed) and its \`streamUrl\` when it has one. It is what **starting a run** and
 \`GET /strategy/{strategyId}/live\` return: your own run, read with your own credentials. Stopping a run
-and \`GET /live/{runId}\` return \`LiveRun\`, which never carries the URL.
+returns \`LiveRun\`, which carries neither \`warmFrom\` nor the URL, and \`GET /live/{runId}\` returns \`LiveRunDetail\`, which carries \`warmFrom\` and never the URL.
 `,
   allOf: [
     {
@@ -3241,6 +3269,9 @@ and \`GET /live/{runId}\` return \`LiveRun\`, which never carries the URL.
     {
       type: "object",
       properties: {
+        warmFrom: {
+          $ref: "#/components/schemas/WarmFrom",
+        },
         streamUrl: {
           type: "string",
           format: "uri",
