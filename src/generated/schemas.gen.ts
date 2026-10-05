@@ -2906,6 +2906,17 @@ export const StartLiveRequestSchema = {
       default: false,
       description: `Request that this run's signals be relayed over its WebSocket channel, from its first signal — in the \`sandbox\` stage too, where only you can subscribe to it. See the "Live execution" guide.`,
     },
+    stream: {
+      type: "boolean",
+      default: false,
+      description: `Ask for a **stream URL**: a secret address that a simple client, or a service that passes your signals
+on to others, can open as a plain WebSocket to receive this run's signals as they are produced, one JSON
+text frame per signal, with none of the live-execution protocol around it. The URL comes back as
+\`streamUrl\` in the response to this call. Available from the \`sandbox\` stage on, on the plans that may
+broadcast; any other plan gets \`429\`. It can be asked for **only when the run is started** (not added
+later), and it also turns \`relay\` on. See the "Live execution" guide, "A plain WebSocket stream of a run".
+`,
+    },
     name: {
       type: "string",
     },
@@ -3133,6 +3144,144 @@ type is stopped by the platform itself (\`desired: STOPPED\`), so it holds no pl
       ],
       description:
         "The run's paper trading configuration as accepted at start, normalised. Absent when the run has no paper trading.",
+    },
+    stats: {
+      allOf: [
+        {
+          $ref: "#/components/schemas/LiveRunStats",
+        },
+      ],
+      description: `The run's latest counters. Returned by the two reads, \`GET /strategy/{strategyId}/live\` and
+\`GET /live/{runId}\`; never by starting or stopping a run. Absent until the first snapshot exists
+(a run that has just started), and absent is not zero.
+`,
+    },
+  },
+} as const;
+
+export const LiveRunStatsSchema = {
+  type: "object",
+  required: ["processed", "opsPerSecond", "instrumentsSeen", "asOfMs", "stale"],
+  description: `What a run has been doing, as of its last snapshot. The platform refreshes it about once a minute
+while the run is being executed, so \`opsPerSecond\` is an average over that interval, not an
+instantaneous rate.
+`,
+  properties: {
+    processed: {
+      type: "integer",
+      format: "int64",
+      description:
+        "Updates of instruments the run has accepted since it started executing. It can start again from zero if the run is restarted.",
+    },
+    opsPerSecond: {
+      type: "number",
+      description:
+        "Updates accepted per second over the last refresh interval. `0` when none arrived.",
+    },
+    instrumentsSeen: {
+      type: "integer",
+      description:
+        "How many distinct instruments the run has received an update for.",
+    },
+    asOfMs: {
+      type: "integer",
+      format: "int64",
+      description: "Epoch milliseconds when these counters were last written.",
+    },
+    progressedAtMs: {
+      type: "integer",
+      format: "int64",
+      description: `Epoch milliseconds of the last snapshot in which \`processed\` had grown. Absent until the run has
+processed anything. A run fed by a source that updates rarely (a funding rate, for example) can
+stay flat for hours: that is how such a run behaves, not a fault.
+`,
+    },
+    stale: {
+      type: "boolean",
+      description: `\`true\` when the run is meant to be running (\`desired\` is \`RUNNING\`) and its counters have not
+been refreshed for several refresh intervals: the platform has stopped updating them, which is
+worth checking against \`state\`. \`false\` otherwise. A run whose \`processed\` is flat is not stale;
+\`progressedAtMs\` is how to tell it apart.
+`,
+    },
+  },
+} as const;
+
+export const LiveRunDetailSchema = {
+  description:
+    "A run as returned by `GET /live/{runId}`, the full state of `LiveRun` plus when it last changed.",
+  allOf: [
+    {
+      $ref: "#/components/schemas/LiveRun",
+    },
+    {
+      type: "object",
+      required: ["updatedAtMs"],
+      properties: {
+        updatedAtMs: {
+          type: "integer",
+          format: "int64",
+          description:
+            "Epoch milliseconds of the run's last change, from any cause. It only moves forward, so of two reads of the same run the one with the larger value is the newer.",
+        },
+      },
+    },
+  ],
+} as const;
+
+export const LiveRunWithStreamSchema = {
+  description: `A run as \`LiveRun\` describes it, plus its \`streamUrl\` when it has one. It is what **starting a run** and
+\`GET /strategy/{strategyId}/live\` return: your own run, read with your own credentials. Stopping a run
+and \`GET /live/{runId}\` return \`LiveRun\`, which never carries the URL.
+`,
+  allOf: [
+    {
+      $ref: "#/components/schemas/LiveRun",
+    },
+    {
+      type: "object",
+      properties: {
+        streamUrl: {
+          type: "string",
+          format: "uri",
+          description: `The run's secret stream URL (\`wss://…\`). **Treat it like a password**: anyone who holds it can read
+this run's signals, from the sandbox stage on. Present only when the run was started with
+\`stream: true\`, is wanted running, has not had its stream revoked, and your plan still lets you
+broadcast; absent otherwise (a plan that lets you broadcast again gets the same URL back). Rotate
+it with \`POST /live/{runId}/stream\` if it leaks, revoke it with \`DELETE /live/{runId}/stream\`.
+`,
+        },
+      },
+    },
+  ],
+} as const;
+
+export const LiveStreamUrlSchema = {
+  type: "object",
+  required: ["streamUrl"],
+  description:
+    "A run's new stream URL, as returned by `POST /live/{runId}/stream`.",
+  properties: {
+    streamUrl: {
+      type: "string",
+      format: "uri",
+      description:
+        "The run's new secret stream URL. The previous one has stopped working.",
+    },
+  },
+} as const;
+
+export const LiveStreamRevokedSchema = {
+  type: "object",
+  required: ["runId", "revoked"],
+  description: "What `DELETE /live/{runId}/stream` returns.",
+  properties: {
+    runId: {
+      type: "string",
+    },
+    revoked: {
+      type: "boolean",
+      description: "Always `true`.",
     },
   },
 } as const;

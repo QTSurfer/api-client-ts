@@ -1,5 +1,11 @@
 # @qtsurfer/api-client
 
+## 0.21.0
+
+### Minor Changes
+
+- Add live run lookup by id, stream URL rotation and revocation, stream-aware live responses, and run statistics from OpenAPI 0.128.17.
+
 ## 0.20.0
 
 ### Minor Changes

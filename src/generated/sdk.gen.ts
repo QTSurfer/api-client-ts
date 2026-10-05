@@ -115,6 +115,9 @@ import type {
   ListPublicLiveData,
   ListPublicLiveResponse,
   ListPublicLiveError,
+  GetLiveRunData,
+  GetLiveRunResponse,
+  GetLiveRunError,
   UpdateLiveData,
   UpdateLiveResponse,
   UpdateLiveError,
@@ -124,6 +127,12 @@ import type {
   SendLiveCommandData,
   SendLiveCommandResponse,
   SendLiveCommandError,
+  RevokeLiveStreamData,
+  RevokeLiveStreamResponse,
+  RevokeLiveStreamError,
+  RotateLiveStreamData,
+  RotateLiveStreamResponse,
+  RotateLiveStreamError,
   GetLiveRunSignalsData,
   GetLiveRunSignalsResponse,
   GetLiveRunSignalsError,
@@ -1289,7 +1298,8 @@ export const getDatasetImport = <ThrowOnError extends boolean = false>(
  * Requests a stop. The run winds down at its own next check-in rather than instantly —
  * poll `GET`/`PATCH` `.../live` and expect `state` to remain `RUNNING` for a short window
  * after `desired` flips to `STOPPED`. Calling this again on an already-stopped run is not an
- * error; it returns the same (unchanged) state.
+ * error; it returns the same (unchanged) state. A stopped run has no stream: its `streamUrl`, if it had one,
+ * stops working and is not in this response.
  *
  */
 export const stopLive = <ThrowOnError extends boolean = false>(
@@ -1315,7 +1325,12 @@ export const stopLive = <ThrowOnError extends boolean = false>(
  * Get this strategy's current (or most recent) live run
  * The run you last started for this strategy — its most complete state, including `params`
  * and the promotion `gate` once the sandbox trial has one to report. Returns the run's last
- * known state even after it has stopped; this endpoint never disappears history.
+ * known state even after it has stopped; this endpoint never disappears history. When the run was started
+ * with a `stream`, `streamUrl` is here too while the run is running and your plan allows it.
+ *
+ * While the run is being executed it also carries `stats`, the run's latest counters (updates
+ * processed, rate, instruments seen), refreshed about once a minute. Starting or stopping a run
+ * does not return them; read them here.
  *
  */
 export const getLive = <ThrowOnError extends boolean = false>(
@@ -1371,6 +1386,11 @@ export const getLive = <ThrowOnError extends boolean = false>(
  * back with `GET /live/{runId}/paper`. A strategy that listens to its own execution events
  * (it overrides `getExecutionCallback()`) has no other execution venue, so it cannot start
  * without a `paper` block.
+ *
+ * **A plain WebSocket stream.** Pass `stream: true` to get a secret URL for this run's signals that a simple
+ * client, or a service that passes them on to others, can open as an ordinary WebSocket, from the sandbox stage
+ * on. The URL is in the response (`streamUrl`) and in `GET /strategy/{strategyId}/live`; treat it like a
+ * password. See the "Live execution" guide.
  *
  */
 export const startLive = <ThrowOnError extends boolean = false>(
@@ -1440,6 +1460,40 @@ export const listPublicLive = <ThrowOnError extends boolean = false>(
     ThrowOnError
   >({
     url: "/live/public",
+    ...options,
+  });
+};
+
+/**
+ * Read one of your runs by its id
+ * Owner only, addressed by `runId` directly rather than through its strategy: the run's own
+ * canonical identity, which is what `POST`/`GET`/`DELETE` `.../live`, `GET /live` and
+ * `GET /live/public` all hand out. Use it to re-read one specific run — including one you
+ * stopped long ago or that is no longer your strategy's most recent — without paging through
+ * `GET /live`.
+ *
+ * Returns the same state as `GET /strategy/{strategyId}/live` (`strategyId` is the strategy's
+ * id, and `stats` is there too), plus `updatedAtMs`: when the run last changed, from any cause — a
+ * state change, a promotion, a parameter update, a stop. A refresh of `stats` is not a change of
+ * the run and does not move `updatedAtMs`. A run that is public is reachable by others through
+ * `GET /live/public`, never through this route.
+ *
+ */
+export const getLiveRun = <ThrowOnError extends boolean = false>(
+  options: Options<GetLiveRunData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).get<
+    GetLiveRunResponse,
+    GetLiveRunError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/live/{runId}",
     ...options,
   });
 };
@@ -1552,6 +1606,63 @@ export const sendLiveCommand = <ThrowOnError extends boolean = false>(
       "Content-Type": "application/json",
       ...options?.headers,
     },
+  });
+};
+
+/**
+ * Revoke a run's stream URL
+ * Revokes a run's stream URL **for good**: connections open on it are closed within about 15 seconds and it
+ * answers `404` from then on. The run itself is not touched, and a stream cannot be added to it again; start
+ * the run again with `stream: true` for a new URL. Owner only, and always allowed, whatever your plan or the
+ * run's state. Repeating it is not an error.
+ *
+ */
+export const revokeLiveStream = <ThrowOnError extends boolean = false>(
+  options: Options<RevokeLiveStreamData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).delete<
+    RevokeLiveStreamResponse,
+    RevokeLiveStreamError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/live/{runId}/stream",
+    ...options,
+  });
+};
+
+/**
+ * Rotate a run's stream URL
+ * Gives a run a **new** stream URL and retires the old one: connections open on the old URL are closed
+ * within about 15 seconds and the old URL answers `404` from then on. Use it when the URL may have leaked.
+ * Owner only, and only for a run that is running and was started with `stream: true` (the URL cannot be added
+ * to a run later, and a revoked one cannot be brought back). The plan is checked again: a plan that may not
+ * broadcast gets `429`.
+ *
+ * See the "Live execution" guide, "A plain WebSocket stream of a run".
+ *
+ */
+export const rotateLiveStream = <ThrowOnError extends boolean = false>(
+  options: Options<RotateLiveStreamData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).post<
+    RotateLiveStreamResponse,
+    RotateLiveStreamError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/live/{runId}/stream",
+    ...options,
   });
 };
 

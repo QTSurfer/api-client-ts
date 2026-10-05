@@ -1821,6 +1821,16 @@ export type StartLiveRequest = {
    * Request that this run's signals be relayed over its WebSocket channel, from its first signal — in the `sandbox` stage too, where only you can subscribe to it. See the "Live execution" guide.
    */
   relay?: boolean;
+  /**
+   * Ask for a **stream URL**: a secret address that a simple client, or a service that passes your signals
+   * on to others, can open as a plain WebSocket to receive this run's signals as they are produced, one JSON
+   * text frame per signal, with none of the live-execution protocol around it. The URL comes back as
+   * `streamUrl` in the response to this call. Available from the `sandbox` stage on, on the plans that may
+   * broadcast; any other plan gets `429`. It can be asked for **only when the run is started** (not added
+   * later), and it also turns `relay` on. See the "Live execution" guide, "A plain WebSocket stream of a run".
+   *
+   */
+  stream?: boolean;
   name?: string;
   description?: string;
   paper?: LivePaperConfig;
@@ -1958,6 +1968,102 @@ export type LiveRun = {
    * The run's paper trading configuration as accepted at start, normalised. Absent when the run has no paper trading.
    */
   paper?: LivePaperConfig;
+  /**
+   * The run's latest counters. Returned by the two reads, `GET /strategy/{strategyId}/live` and
+   * `GET /live/{runId}`; never by starting or stopping a run. Absent until the first snapshot exists
+   * (a run that has just started), and absent is not zero.
+   *
+   */
+  stats?: LiveRunStats;
+};
+
+/**
+ * What a run has been doing, as of its last snapshot. The platform refreshes it about once a minute
+ * while the run is being executed, so `opsPerSecond` is an average over that interval, not an
+ * instantaneous rate.
+ *
+ */
+export type LiveRunStats = {
+  /**
+   * Updates of instruments the run has accepted since it started executing. It can start again from zero if the run is restarted.
+   */
+  processed: number;
+  /**
+   * Updates accepted per second over the last refresh interval. `0` when none arrived.
+   */
+  opsPerSecond: number;
+  /**
+   * How many distinct instruments the run has received an update for.
+   */
+  instrumentsSeen: number;
+  /**
+   * Epoch milliseconds when these counters were last written.
+   */
+  asOfMs: number;
+  /**
+   * Epoch milliseconds of the last snapshot in which `processed` had grown. Absent until the run has
+   * processed anything. A run fed by a source that updates rarely (a funding rate, for example) can
+   * stay flat for hours: that is how such a run behaves, not a fault.
+   *
+   */
+  progressedAtMs?: number;
+  /**
+   * `true` when the run is meant to be running (`desired` is `RUNNING`) and its counters have not
+   * been refreshed for several refresh intervals: the platform has stopped updating them, which is
+   * worth checking against `state`. `false` otherwise. A run whose `processed` is flat is not stale;
+   * `progressedAtMs` is how to tell it apart.
+   *
+   */
+  stale: boolean;
+};
+
+/**
+ * A run as returned by `GET /live/{runId}`, the full state of `LiveRun` plus when it last changed.
+ */
+export type LiveRunDetail = LiveRun & {
+  /**
+   * Epoch milliseconds of the run's last change, from any cause. It only moves forward, so of two reads of the same run the one with the larger value is the newer.
+   */
+  updatedAtMs: number;
+};
+
+/**
+ * A run as `LiveRun` describes it, plus its `streamUrl` when it has one. It is what **starting a run** and
+ * `GET /strategy/{strategyId}/live` return: your own run, read with your own credentials. Stopping a run
+ * and `GET /live/{runId}` return `LiveRun`, which never carries the URL.
+ *
+ */
+export type LiveRunWithStream = LiveRun & {
+  /**
+   * The run's secret stream URL (`wss://…`). **Treat it like a password**: anyone who holds it can read
+   * this run's signals, from the sandbox stage on. Present only when the run was started with
+   * `stream: true`, is wanted running, has not had its stream revoked, and your plan still lets you
+   * broadcast; absent otherwise (a plan that lets you broadcast again gets the same URL back). Rotate
+   * it with `POST /live/{runId}/stream` if it leaks, revoke it with `DELETE /live/{runId}/stream`.
+   *
+   */
+  streamUrl?: string;
+};
+
+/**
+ * A run's new stream URL, as returned by `POST /live/{runId}/stream`.
+ */
+export type LiveStreamUrl = {
+  /**
+   * The run's new secret stream URL. The previous one has stopped working.
+   */
+  streamUrl: string;
+};
+
+/**
+ * What `DELETE /live/{runId}/stream` returns.
+ */
+export type LiveStreamRevoked = {
+  runId: string;
+  /**
+   * Always `true`.
+   */
+  revoked: boolean;
 };
 
 /**
@@ -3698,9 +3804,9 @@ export type GetLiveError = GetLiveErrors[keyof GetLiveErrors];
 
 export type GetLiveResponses = {
   /**
-   * The run's current state
+   * The run's current state, with its `streamUrl` when it has one
    */
-  200: LiveRun;
+  200: LiveRunWithStream;
 };
 
 export type GetLiveResponse = GetLiveResponses[keyof GetLiveResponses];
@@ -3719,7 +3825,7 @@ export type StartLiveData = {
 
 export type StartLiveErrors = {
   /**
-   * Malformed `sources` (not exactly one entry, missing field, unsupported `type`), a `type` the strategy cannot consume (a ticker strategy with a `kline` source, or the reverse; the message names both), an invalid `visibility`, an invalid `paper` block (an unknown field, a wrong type or an out-of-range value), or no `paper` block for a strategy that listens to its own execution events.
+   * Malformed `sources` (not exactly one entry, missing field, unsupported `type`), a `type` the strategy cannot consume (a ticker strategy with a `kline` source, or the reverse; the message names both), an invalid `visibility`, an invalid `paper` block (an unknown field, a wrong type or an out-of-range value), or no `paper` block for a strategy that listens to its own execution events. A `relay` or `stream` that is not `true` or `false`, or a `stream` where streams are not available yet.
    */
   400: ResponseError;
   /**
@@ -3731,9 +3837,10 @@ export type StartLiveErrors = {
    */
   409: ResponseError;
   /**
-   * Your plan does not include live runs, would exceed your concurrent-run or
-   * instrument-count limit, or the platform is at capacity right now. Carries a
-   * `Retry-After` header.
+   * One of two kinds. **Your plan** does not include live runs, would exceed your concurrent-run or
+   * instrument-count limit, or does not let you ask for a `stream`: the message names your plan, and
+   * retrying will not help until something changes, so there is no `Retry-After`. Or **the platform is at
+   * capacity** right now: a `Retry-After` header says when to try again.
    *
    */
   429: ResponseError;
@@ -3743,9 +3850,9 @@ export type StartLiveError = StartLiveErrors[keyof StartLiveErrors];
 
 export type StartLiveResponses = {
   /**
-   * Started — the run's own state, in the sandbox stage
+   * Started — the run's own state, in the sandbox stage, with its `streamUrl` when you asked for a stream
    */
-  201: LiveRun;
+  201: LiveRunWithStream;
 };
 
 export type StartLiveResponse = StartLiveResponses[keyof StartLiveResponses];
@@ -3819,6 +3926,36 @@ export type ListPublicLiveResponses = {
 
 export type ListPublicLiveResponse =
   ListPublicLiveResponses[keyof ListPublicLiveResponses];
+
+export type GetLiveRunData = {
+  body?: never;
+  path: {
+    /**
+     * The `runId` from `POST`/`GET`/`DELETE` `.../live`, from `GET /live` or from `GET /live/public`
+     */
+    runId: string;
+  };
+  query?: never;
+  url: "/live/{runId}";
+};
+
+export type GetLiveRunErrors = {
+  /**
+   * No such run, or you do not own it — the two look identical on purpose.
+   */
+  404: ResponseError;
+};
+
+export type GetLiveRunError = GetLiveRunErrors[keyof GetLiveRunErrors];
+
+export type GetLiveRunResponses = {
+  /**
+   * The run
+   */
+  200: LiveRunDetail;
+};
+
+export type GetLiveRunResponse = GetLiveRunResponses[keyof GetLiveRunResponses];
 
 export type UpdateLiveData = {
   body?: UpdateLiveRequest;
@@ -3939,6 +4076,78 @@ export type SendLiveCommandResponses = {
 
 export type SendLiveCommandResponse =
   SendLiveCommandResponses[keyof SendLiveCommandResponses];
+
+export type RevokeLiveStreamData = {
+  body?: never;
+  path: {
+    runId: string;
+  };
+  query?: never;
+  url: "/live/{runId}/stream";
+};
+
+export type RevokeLiveStreamErrors = {
+  /**
+   * No such run, or you do not own it.
+   */
+  404: ResponseError;
+  /**
+   * The run was started without a stream, so there is nothing to revoke.
+   */
+  409: ResponseError;
+};
+
+export type RevokeLiveStreamError =
+  RevokeLiveStreamErrors[keyof RevokeLiveStreamErrors];
+
+export type RevokeLiveStreamResponses = {
+  /**
+   * Revoked (or already revoked).
+   */
+  200: LiveStreamRevoked;
+};
+
+export type RevokeLiveStreamResponse =
+  RevokeLiveStreamResponses[keyof RevokeLiveStreamResponses];
+
+export type RotateLiveStreamData = {
+  body?: never;
+  path: {
+    runId: string;
+  };
+  query?: never;
+  url: "/live/{runId}/stream";
+};
+
+export type RotateLiveStreamErrors = {
+  /**
+   * No such run, or you do not own it.
+   */
+  404: ResponseError;
+  /**
+   * One of three reasons, each its own message: the run was started without a stream; its stream was
+   * revoked (a revoked stream cannot be restored: start the run again with a stream); or the run is stopped.
+   *
+   */
+  409: ResponseError;
+  /**
+   * Your plan does not let you broadcast a run's signals. The message names your plan; retrying will not help until it changes, so there is no `Retry-After`.
+   */
+  429: ResponseError;
+};
+
+export type RotateLiveStreamError =
+  RotateLiveStreamErrors[keyof RotateLiveStreamErrors];
+
+export type RotateLiveStreamResponses = {
+  /**
+   * The new URL.
+   */
+  200: LiveStreamUrl;
+};
+
+export type RotateLiveStreamResponse =
+  RotateLiveStreamResponses[keyof RotateLiveStreamResponses];
 
 export type GetLiveRunSignalsData = {
   body?: never;
