@@ -1800,13 +1800,33 @@ export type LiveSource = {
    */
   type: "ticker" | "kline";
   /**
-   * Instrument symbols, or `["*"]` for every instrument the exchange/segment offers (tier-gated).
+   * The instruments the run reads. For a run started with a list, that list as sent; for one started without `instruments`, or with `["*"]`, what the start resolved: the list of pairs the compilation of the strategy records as the instruments it accepts, when it records one, or `["*"]` for every instrument the exchange/segment offers (tier-gated). An entry is written `BASE/QUOTE` and either side can be `*` to mean any, such as any base paired with USDT. Symbols are not case-sensitive and spaces around them are ignored, so `btc/usdt` and `BTC/USDT` are the same instrument.
    */
   instruments: Array<string>;
 };
 
+/**
+ * One market feed to start a live run on. Exactly one entry per run today. It is `LiveSource` as you ask for it: the only difference is that `instruments` can be left out.
+ */
+export type LiveSourceRequest = {
+  /**
+   * Venue category. `cx` (centralized exchange) is the only one live runs support today.
+   */
+  venueType: string;
+  exchange: string;
+  segment: string;
+  /**
+   * Both `ticker` and `kline` connect to the lightest (fastest) cadence available for the exchange — today, 1 tick/second on every supported exchange. Choosing a specific cadence is not offered yet.
+   */
+  type: "ticker" | "kline";
+  /**
+   * Which instruments the run reads. A QTScript strategy can declare which instruments it accepts with an `instruments` line in its source. When the compilation of the strategy records that selection as a list of pairs, leaving `instruments` out, or sending `["*"]`, takes that list; otherwise the run reads every instrument the exchange/segment offers. A list of instruments is taken as sent, and `[]` and `null` are refused with `400`. An entry is written `BASE/QUOTE`; either side can be `*` to mean any: any base can be paired with USDT, and BTC can be paired with any quote. Entries are not case-sensitive and spaces around them are ignored, so `btc/usdt` and `BTC/USDT` are the same instrument. An entry that is not of that form (no `/`, an empty side, a `.` or a space inside a side, or a `*` mixed with other characters of a side) makes the run fail when it starts. Plan limits: a list with an entry that has a `*` on a side counts like `["*"]` and only plans that include the wildcard accept it; the other entries are counted one by one. The instruments the run actually reads come back in the run's `sources`.
+   */
+  instruments?: Array<string>;
+};
+
 export type StartLiveRequest = {
-  sources: [LiveSource];
+  sources: [LiveSourceRequest];
   /**
    * Strategy parameters to start with. Opaque key/value pairs — see this strategy's own `declaredProperties` (from `POST /strategy`) for the keys it accepts.
    */
@@ -3847,7 +3867,7 @@ export type StartLiveData = {
 
 export type StartLiveErrors = {
   /**
-   * Malformed `sources` (not exactly one entry, missing field, unsupported `type`), a `type` the strategy cannot consume (a ticker strategy with a `kline` source, or the reverse; the message names both), an invalid `visibility`, an invalid `paper` block (an unknown field, a wrong type or an out-of-range value), or no `paper` block for a strategy that listens to its own execution events. A `relay` or `stream` that is not `true` or `false`, or a `stream` where streams are not available yet. A `warmFrom` that is not an integer from 0 to 3600.
+   * Malformed `sources` (not exactly one entry, missing field, unsupported `type`), a `type` the strategy cannot consume (a ticker strategy with a `kline` source, or the reverse; the message names both), an invalid `visibility`, an invalid `paper` block (an unknown field, a wrong type or an out-of-range value), or no `paper` block for a strategy that listens to its own execution events. A `relay` or `stream` that is not `true` or `false`, or a `stream` where streams are not available yet. A `warmFrom` that is not an integer from 0 to 3600. An `instruments` that is empty or `null`.
    */
   400: ResponseError;
   /**
@@ -4186,8 +4206,8 @@ export type GetLiveRunSignalsData = {
     sinceMs?: number;
     /**
      * Narrow to one or more instruments. Omitted, or `*`, returns every instrument the run
-     * covers. Accepts a single pair (`BTC/USDT`), either half as a wildcard (`*USDT` for any
-     * base against that quote, `BTC*` for that base against any quote), or a comma-separated
+     * covers. Accepts a single pair (`BTC/USDT`), either half as a wildcard (any base paired
+     * with that quote, or BTC paired with any quote), or a comma-separated
      * list of pairs (`BTC/USDT,ETH/EUR`). Symbols are matched exactly, case included — pass
      * them as this API reports them.
      *

@@ -416,7 +416,7 @@ export const listStrategies = <ThrowOnError extends boolean = false>(
  *
  * The source is either **Java** — a class extending a strategy base class — or **QTScript**
  * (beta), a compact strategy language whose braced bodies are plain Java. QTScript source
- * begins with the `strategy` keyword — whitespace and comments (`//` or `* *`) before it
+ * begins with the `strategy` keyword — whitespace and line or block comments before it
  * are ignored — and that is how the two are told apart: there is no separate endpoint and
  * no header to set. Once registered, a strategy is used the same way
  * whichever language it was written in.
@@ -1368,6 +1368,12 @@ export const getLive = <ThrowOnError extends boolean = false>(
  * `type` is `ticker` or `kline`; anything else is rejected. Both connect to the lightest
  * (fastest) cadence available for the exchange — today that is 1 tick/second on every
  * supported exchange; choosing among several cadences is not offered yet.
+ *
+ * `instruments` can be left out. A QTScript strategy can declare which instruments it accepts with an `instruments`
+ * line in its source; when the compilation of the strategy records that selection as a list of pairs, a
+ * start that leaves `instruments` out, or sends `["*"]`, takes that list, and otherwise the run reads every
+ * instrument the exchange/segment offers. A list you send is taken as sent. Either side of an entry can be `*`
+ * (any base paired with USDT). The instruments the run reads come back in `sources`. See the "Live execution" guide, "Sources".
  *
  * `params` is passed straight through to the strategy at start — the same free-form object
  * `POST /strategy/{strategyId}/validate` and the backtest endpoints already accept. To change

@@ -2871,7 +2871,44 @@ export const LiveSourceSchema = {
       },
       example: ["BTC/USDT"],
       description:
-        'Instrument symbols, or `["*"]` for every instrument the exchange/segment offers (tier-gated).',
+        'The instruments the run reads. For a run started with a list, that list as sent; for one started without `instruments`, or with `["*"]`, what the start resolved: the list of pairs the compilation of the strategy records as the instruments it accepts, when it records one, or `["*"]` for every instrument the exchange/segment offers (tier-gated). An entry is written `BASE/QUOTE` and either side can be `*` to mean any, such as any base paired with USDT. Symbols are not case-sensitive and spaces around them are ignored, so `btc/usdt` and `BTC/USDT` are the same instrument.',
+    },
+  },
+} as const;
+
+export const LiveSourceRequestSchema = {
+  type: "object",
+  required: ["venueType", "exchange", "segment", "type"],
+  description:
+    "One market feed to start a live run on. Exactly one entry per run today. It is `LiveSource` as you ask for it: the only difference is that `instruments` can be left out.",
+  properties: {
+    venueType: {
+      type: "string",
+      example: "cx",
+      description:
+        "Venue category. `cx` (centralized exchange) is the only one live runs support today.",
+    },
+    exchange: {
+      type: "string",
+      example: "binance",
+    },
+    segment: {
+      type: "string",
+      example: "spot",
+    },
+    type: {
+      type: "string",
+      enum: ["ticker", "kline"],
+      description:
+        "Both `ticker` and `kline` connect to the lightest (fastest) cadence available for the exchange — today, 1 tick/second on every supported exchange. Choosing a specific cadence is not offered yet.",
+    },
+    instruments: {
+      type: "array",
+      items: {
+        type: "string",
+      },
+      example: ["BTC/USDT"],
+      description: `Which instruments the run reads. A QTScript strategy can declare which instruments it accepts with an \`instruments\` line in its source. When the compilation of the strategy records that selection as a list of pairs, leaving \`instruments\` out, or sending \`["*"]\`, takes that list; otherwise the run reads every instrument the exchange/segment offers. A list of instruments is taken as sent, and \`[]\` and \`null\` are refused with \`400\`. An entry is written \`BASE/QUOTE\`; either side can be \`*\` to mean any: any base can be paired with USDT, and BTC can be paired with any quote. Entries are not case-sensitive and spaces around them are ignored, so \`btc/usdt\` and \`BTC/USDT\` are the same instrument. An entry that is not of that form (no \`/\`, an empty side, a \`.\` or a space inside a side, or a \`*\` mixed with other characters of a side) makes the run fail when it starts. Plan limits: a list with an entry that has a \`*\` on a side counts like \`["*"]\` and only plans that include the wildcard accept it; the other entries are counted one by one. The instruments the run actually reads come back in the run's \`sources\`.`,
     },
   },
 } as const;
@@ -2885,7 +2922,7 @@ export const StartLiveRequestSchema = {
       minItems: 1,
       maxItems: 1,
       items: {
-        $ref: "#/components/schemas/LiveSource",
+        $ref: "#/components/schemas/LiveSourceRequest",
       },
     },
     params: {

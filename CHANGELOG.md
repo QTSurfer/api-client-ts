@@ -1,5 +1,11 @@
 # @qtsurfer/api-client
 
+## 0.23.0
+
+### Minor Changes
+
+- Allow live-run requests to omit instruments and let the strategy's declared instrument list select the feed when available.
+
 ## 0.22.0
 
 ### Minor Changes
