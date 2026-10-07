@@ -1,5 +1,11 @@
 # @qtsurfer/api-client
 
+## 0.23.1
+
+### Patch Changes
+
+- Regenerate the sweep cancellation documentation for OpenAPI 0.128.24, including the meaning of `pendingShards` while a cancellation drains.
+
 ## 0.23.0
 
 ### Minor Changes

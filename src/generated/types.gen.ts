@@ -679,6 +679,9 @@ export type SweepProgress = {
    */
   aborted: number;
   shardCount: number;
+  /**
+   * Shards (or folds) that have not finished yet. On a cancelled sweep, `0` is what says every run that was in flight has finished and the leaderboard is complete: `CANCELLED` is reported before that.
+   */
   pendingShards: number;
   /**
    * Shards (or folds) that failed and will not be retried. Distinct from `aborted`: this counts whole units that never reported, not runs that ran badly.

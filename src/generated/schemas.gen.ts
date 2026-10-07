@@ -1120,6 +1120,8 @@ export const SweepProgressSchema = {
     },
     pendingShards: {
       type: "integer",
+      description:
+        "Shards (or folds) that have not finished yet. On a cancelled sweep, `0` is what says every run that was in flight has finished and the leaderboard is complete: `CANCELLED` is reported before that.",
     },
     failedShards: {
       type: "integer",
