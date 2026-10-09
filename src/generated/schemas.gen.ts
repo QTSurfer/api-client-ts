@@ -2938,12 +2938,22 @@ export const StartLiveRequestSchema = {
       enum: ["private", "public"],
       default: "private",
       description:
-        "A `public` run appears in `GET /live/public` and its signal channel accepts subscriptions from anyone, not only you — from the moment it is promoted to `live`. While it is a `sandbox` trial, `public` is only what you asked for, and only you can read it.",
+        "A `public` run appears in `GET /live/public` and its signal channel accepts subscriptions from anyone, not only you — from the moment it is in the `live` stage, which is when it is promoted or, for a run that starts there, at once. While it is a `sandbox` trial, `public` is only what you asked for, and only you can read it.",
     },
     relay: {
       type: "boolean",
       default: false,
       description: `Request that this run's signals be relayed over its WebSocket channel, from its first signal — in the \`sandbox\` stage too, where only you can subscribe to it. See the "Live execution" guide.`,
+    },
+    sandbox: {
+      type: "boolean",
+      default: false,
+      description: `Start in the \`sandbox\` stage even though an earlier run of yours already took this compiled strategy
+through it. Without it, such a strategy starts in \`LIVE\` at once; with \`true\` it starts in \`SANDBOX\` like
+a first run, which is how to read its signals back over the connection (\`history\`, kept for the
+\`sandbox\` stage only) while you debug it. For a strategy that has not been through the sandbox it
+changes nothing: it always starts there. Anything other than \`true\` or \`false\` is \`400\`.
+`,
     },
     stream: {
       type: "boolean",
@@ -3135,7 +3145,7 @@ export const LiveRunSchema = {
       type: "string",
       enum: ["SANDBOX", "LIVE"],
       description:
-        "A new run always starts `SANDBOX`, a 24-hour trial in which it is compared against a second execution and checked for resource use and stability. A run that passes moves to `LIVE` automatically when the 24 hours are up.",
+        "A new run starts `SANDBOX`, a 24-hour trial in which it is compared against a second execution and checked for resource use and stability. A run that passes moves to `LIVE` automatically when the 24 hours are up. A run of a strategy that an earlier run of yours already took through the trial starts `LIVE`, unless you started it with `sandbox: true`.",
     },
     state: {
       type: "string",
@@ -3190,7 +3200,7 @@ type is stopped by the platform itself (\`desired: STOPPED\`), so it holds no pl
       type: "object",
       additionalProperties: true,
       description:
-        "The sandbox trial's promotion verdict. Absent for the whole 24-hour trial and present once it ends, so an absent `gate` means the trial has not finished. `passed` is the verdict; the rest is diagnostic detail whose shape is not yet stabilized as public API: treat it as opaque.",
+        "The sandbox trial's promotion verdict. Absent for the whole 24-hour trial and present once it ends, so an absent `gate` means the trial has not finished. A run that started in `LIVE` without a trial has it from the start: the verdict of the earlier run it relies on, with `inheritedFrom` naming that run. `passed` is the verdict; the rest is diagnostic detail whose shape is not yet stabilized as public API: treat it as opaque.",
     },
     paper: {
       allOf: [
@@ -3429,7 +3439,7 @@ export const LiveRunSummarySchema = {
       type: "string",
       enum: ["SANDBOX", "LIVE"],
       description:
-        "A new run always starts `SANDBOX`, a 24-hour trial in which it is compared against a second execution and checked for resource use and stability. A run that passes moves to `LIVE` automatically when the 24 hours are up.",
+        "A new run starts `SANDBOX`, a 24-hour trial in which it is compared against a second execution and checked for resource use and stability. A run that passes moves to `LIVE` automatically when the 24 hours are up. A run of a strategy that an earlier run of yours already took through the trial starts `LIVE`, unless you started it with `sandbox: true`.",
     },
     state: {
       type: "string",

@@ -1363,12 +1363,22 @@ export const getLive = <ThrowOnError extends boolean = false>(
 
 /**
  * Start a strategy on a live market feed
- * Starts your strategy against a live market feed. A new run always begins in the **sandbox**
+ * Starts your strategy against a live market feed. A new run begins in the **sandbox**
  * stage — a short trial that compares an independent second execution against the first for
  * agreement — before it is eligible for promotion to the live stage where it actually
  * publishes signals other systems can act on. Poll `GET /strategy/{strategyId}/live` (or
  * `PATCH`/`DELETE` `/live/{runId}` once you have the `runId`) to watch `stage` move from
  * `SANDBOX` to `LIVE`.
+ *
+ * A strategy that has already been through that trial does not go through it again. When an
+ * earlier run of yours of the same compiled strategy was promoted to `LIVE`, and none of that
+ * compilation's runs was stopped for using more resources than allowed, the new run starts in
+ * `LIVE` at once: the response says `stage: LIVE` and carries the earlier verdict in `gate`.
+ * The parameters, sources and instruments may differ from the earlier run. Submitting the
+ * strategy again (`POST /strategy`) compiles it anew, and a new compilation goes through the
+ * sandbox like a first run. Send `sandbox: true` to start in the sandbox anyway — for
+ * example to read the run's signals back over the connection while you debug it, which the
+ * live stage does not keep.
  *
  * Only one run per strategy at a time — starting again while one is already running is `409`;
  * stop the current one first.
