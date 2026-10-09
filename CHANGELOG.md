@@ -1,5 +1,11 @@
 # @qtsurfer/api-client
 
+## 0.24.0
+
+### Minor Changes
+
+- [`acf7e59`](https://github.com/QTSurfer/api-client-ts/commit/acf7e59ba03ec39047db14f9df75f779c951d2fe) Thanks [@mrmx](https://github.com/mrmx)! - Regenerate for OpenAPI 0.128.25. Add the optional `sandbox` field to `startLive` and document inherited sandbox verdicts and live-stage starts.
+
 ## 0.23.1
 
 ### Patch Changes
