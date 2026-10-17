@@ -4,11 +4,11 @@
 
 ### Minor Changes
 
-- Discover CEX and DEX venues, list typed pool catalogues, start pool kline live runs, and import centralized exchange history with the full cadence vocabulary from OpenAPI 0.128.36.
+- Discover CEX and DEX venues, list typed pool catalogues, start pool kline live runs, and import centralized exchange history with the full cadence vocabulary from OpenAPI 0.128.37.
 
   Instrument routes now return `InstrumentCatalogueResponse` (`InstrumentListResponse | PoolListResponse`), distinguished by `meta.venueType`. Instruments require `symbol`; unknown price, volume, and pool creation dates are omitted. Exchange discovery includes required `venueType`, `segments`, and `liveSegments`; live sources use `cex` and `dex`.
 
-  Read resource-to-actions `KeyScopes` from tokens and accounts instead of a scope list. The API reports these grants but does not yet enforce missing scopes.
+  Read resource-to-actions `KeyScopes` from tokens and accounts instead of a scope list. Resources without actions are omitted; a key with no grants is `{}`. Individual operations currently report these grants without enforcing missing scopes. A deployment can require at least one resource/action scope to issue a token: authentication returns `403` with `AuthTokenError.code` `apikey_without_scopes` and mints no token. Create a key with at least one scope before authenticating again; retrying the same key does not fix this rejection.
 
   Hourly downloads cover the last seven days, expose provisional and timestamp-unit headers through `response`, and return structured `ResponseError.reason` and `ErrorNextCall` recovery details. Lastra uses `application/vnd.qtsurfer.lastra` and microsecond timestamps; Parquet remains in milliseconds. Recent hours can be provisional or `NOT_YET_AVAILABLE`; honour `Retry-After` on retryable failures and use dataset imports for older history.
 

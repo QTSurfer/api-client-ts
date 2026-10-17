@@ -57,7 +57,13 @@ const { data, error } = await authenticate({
 if (error) throw error;
 
 const { access_token: jwt } = data;  // feed to client.setConfig() for the rest
+console.log(data.scopes); // e.g. { exchanges: ['read'], backtests: ['read', 'execute'] }
 ```
+
+An invalid, revoked, or expired key returns `401`. Where a deployment requires scopes, a key
+with none returns `403` with `AuthTokenError.code === 'apikey_without_scopes'`, and no token is
+minted. Create a key with at least one resource/action scope in the web app; retrying the same
+scope-less key does not fix the rejection. Read the code from `error` and the status from `response`.
 
 For production use, prefer the [`@qtsurfer/sdk`](https://github.com/QTSurfer/sdk-ts)
 `authenticate(apikey)` helper — it returns a session that refreshes the JWT
@@ -69,7 +75,7 @@ pluggable token stores so callers don't reinvent that plumbing.
 All operations are exported as standalone functions; every operation accepts an `Options` object and returns `{ data, error, response }`.
 
 The table is exhaustive: `src/generated/` is produced from the OpenAPI spec, so **all 48 operations**
-the spec declares are exported. The rows below describe **spec version 0.128.36**, which is versioned
+the spec declares are exported. The rows below describe **spec version 0.128.37**, which is versioned
 independently of this package.
 
 | Function | Method | Path | Purpose |
@@ -140,7 +146,9 @@ preparation support all fifteen cadence labels from `1s` through `1q`.
 
 `AuthTokenResponse.scopes` and `Account.scopes` use `KeyScopes`, a resource-to-actions map such
 as `{ exchanges: ['read'], backtests: ['read', 'execute'] }`; a key with none reports `{}`.
-The API currently reports these grants without refusing operations for missing scopes.
+A scope is one resource and one action; resources with no actions are omitted. The API reports
+these grants without refusing individual operations for missing scopes, although token issuance
+can reject a key with no scopes as described above.
 
 Hourly downloads cover the last seven days. Lastra content is `application/vnd.qtsurfer.lastra`
 and its `ts` column uses microseconds (`X-Ts-Unit: micros`); Parquet timestamps use milliseconds.

@@ -1992,8 +1992,9 @@ export type DatasetImportState = {
 
 /**
  * What your API key may do, as a map from a resource to the actions allowed on it. Names are
- * lower case: `{ "backtests": ["read", "write", "execute"], "exchanges": ["read"] }`. A key
- * with no scopes is `{}`. `GET /account` and `POST /auth/token` return the same map for the
+ * lower case: `{ "backtests": ["read", "write", "execute"], "exchanges": ["read"] }`. A scope
+ * is a resource and an action: a resource is listed only with at least one action, and a key
+ * with no scope is `{}`. `GET /account` and `POST /auth/token` return the same map for the
  * same key. The API reports the scopes of a key; it does not yet refuse an operation because
  * a scope is missing.
  *
@@ -2023,13 +2024,17 @@ export type AuthTokenResponse = {
 };
 
 /**
- * Error envelope returned by `POST /auth/token` when the API key is rejected.
+ * Error envelope returned by `POST /auth/token` when the API key is rejected (`401`) or carries no scopes where scopes are required (`403`).
  */
 export type AuthTokenError = {
   /**
    * Machine-readable error reason.
    */
-  code: "invalid_apikey" | "apikey_revoked" | "apikey_expired";
+  code:
+    | "invalid_apikey"
+    | "apikey_revoked"
+    | "apikey_expired"
+    | "apikey_without_scopes";
   /**
    * Human-readable description of the failure.
    */
@@ -2718,6 +2723,10 @@ export type AuthenticateErrors = {
    * API key is invalid, revoked, or expired.
    */
   401: AuthTokenError;
+  /**
+   * The API key is valid but carries no scopes, and this deployment requires them.
+   */
+  403: AuthTokenError;
   /**
    * Rate limit exceeded for this API key.
    */

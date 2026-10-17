@@ -175,6 +175,10 @@ export type Options<
  * expires after `expires_in` seconds. Callers should refresh the token
  * before expiry (or on a `401` response) by calling this endpoint again.
  *
+ * The answer's `scopes` say what the key may do. Where a deployment requires scopes, a key
+ * that carries none is refused with `403` and the code `apikey_without_scopes`: create a key
+ * with at least one scope.
+ *
  */
 export const authenticate = <ThrowOnError extends boolean = false>(
   options?: Options<AuthenticateData, ThrowOnError>
