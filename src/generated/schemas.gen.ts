@@ -15,6 +15,46 @@ export const ResponseErrorSchema = {
       type: "string",
       example: "Invalid request",
     },
+    reason: {
+      description: `A stable token naming the cause, for a client to branch on without reading \`message\`.
+Present only on an error that has one, and each operation that can return one lists
+the values it uses. A client treats a value it does not know like an absent \`reason\`.
+`,
+      type: "string",
+      example: "OUTSIDE_WINDOW",
+    },
+    next: {
+      $ref: "#/components/schemas/ErrorNextCall",
+    },
+  },
+} as const;
+
+export const ErrorNextCallSchema = {
+  description: `The call that gets past an error, ready to send: a client that wants the same thing by
+another route makes this request. Present only on an error that has one.
+`,
+  type: "object",
+  required: ["method", "path"],
+  properties: {
+    method: {
+      description: "HTTP method of the call.",
+      type: "string",
+      enum: ["GET", "POST", "PUT", "DELETE"],
+      example: "POST",
+    },
+    path: {
+      description:
+        "Path of the call, relative to the server URL (the one that already ends in `/v1`).",
+      type: "string",
+      example: "/datasets/imports",
+    },
+    body: {
+      description: `JSON body of the call, when it has one. Whatever depends on the caller and cannot be
+known here (such as the \`name\` of a dataset) is left for the client to add.
+`,
+      type: "object",
+      additionalProperties: true,
+    },
   },
 } as const;
 
@@ -37,6 +77,20 @@ export const InstrumentSchema = {
   description: "Exchange instrument identifier (e.g. a currency pair)",
   type: "string",
   example: "BTC/USDT",
+} as const;
+
+export const InstrumentCatalogueResponseSchema = {
+  description: `An exchange's instrument catalogue: centralized-exchange instruments or decentralized-exchange
+pools. Read \`meta.venueType\` to distinguish \`cex\` from \`dex\`, including when \`data\` is empty.
+`,
+  oneOf: [
+    {
+      $ref: "#/components/schemas/InstrumentListResponse",
+    },
+    {
+      $ref: "#/components/schemas/PoolListResponse",
+    },
+  ],
 } as const;
 
 export const InstrumentListResponseSchema = {
@@ -63,7 +117,7 @@ export const InstrumentListResponseSchema = {
 export const InstrumentListMetaSchema = {
   description: "Metadata describing the instruments listing",
   type: "object",
-  required: ["updatedAt", "exchange", "segment"],
+  required: ["updatedAt", "exchange", "segment", "venueType"],
   properties: {
     updatedAt: {
       type: "string",
@@ -81,6 +135,13 @@ export const InstrumentListMetaSchema = {
       enum: ["spot", "futures"],
       description: "The market segment served in `data`",
       example: "spot",
+    },
+    venueType: {
+      type: "string",
+      enum: ["cex"],
+      description:
+        "The venue type of the exchange, as `GET /exchanges` lists it. Always `cex` here; a listing of pools says `dex`.",
+      example: "cex",
     },
   },
 } as const;
@@ -115,6 +176,231 @@ export const InstrumentLinksSchema = {
       ],
       description:
         "Link to the futures instruments listing. Present only when the exchange has a futures segment.",
+    },
+  },
+} as const;
+
+export const PoolListResponseSchema = {
+  description:
+    "HAL-style response envelope for the instruments listing of a decentralized exchange, whose instruments are pools",
+  type: "object",
+  required: ["data", "meta", "_links"],
+  properties: {
+    data: {
+      type: "array",
+      description:
+        "The pools worth running, the most traded in the last 24 hours first",
+      items: {
+        $ref: "#/components/schemas/PoolDetail",
+      },
+    },
+    meta: {
+      $ref: "#/components/schemas/PoolListMeta",
+    },
+    _links: {
+      $ref: "#/components/schemas/PoolLinks",
+    },
+  },
+  example: {
+    data: [
+      {
+        id: "0x52e65b17fb6e5ba00ed806f37afcd2daa50271ca",
+        symbol: "WETH/USDG",
+        base: "WETH",
+        quote: "USDG",
+        baseAddress: "0x0bd7d308f8e1639fab988df18a8011f41eacad73",
+        quoteAddress: "0x5fc5360d0400a0fd4f2af552add042d716f1d168",
+        feePercent: 0.01,
+        lastPrice: 2411.285967,
+        volume24h: 274033077.4,
+        tvlUsd: 19857902.02,
+        volume24hUsd: 273876056.45,
+        createdAt: "2026-07-02T20:51:08Z",
+      },
+    ],
+    meta: {
+      updatedAt: "2026-10-14T22:32:34Z",
+      exchange: "robinhood",
+      segment: "uniswap-v3",
+      venueType: "dex",
+      minTvlUsd: 10000,
+      limit: 50,
+    },
+    _links: {
+      self: {
+        href: "/v1/exchange/robinhood/uniswap-v3/instruments",
+      },
+      "uniswap-v3": {
+        href: "/v1/exchange/robinhood/uniswap-v3/instruments",
+      },
+    },
+  },
+} as const;
+
+export const PoolListMetaSchema = {
+  description:
+    "Metadata describing the pools listing of a decentralized exchange",
+  type: "object",
+  required: [
+    "updatedAt",
+    "exchange",
+    "segment",
+    "venueType",
+    "minTvlUsd",
+    "limit",
+  ],
+  properties: {
+    updatedAt: {
+      type: "string",
+      format: "date-time",
+      description:
+        "When this listing was last refreshed. It is refreshed every hour, and the `lastPrice` of each pool is as of this time.",
+      example: "2026-10-14T22:32:34Z",
+    },
+    exchange: {
+      type: "string",
+      description: "The exchange the pools belong to",
+      example: "robinhood",
+    },
+    segment: {
+      type: "string",
+      description:
+        "The protocol served in `data`, one of the exchange's `segments`",
+      example: "uniswap-v3",
+    },
+    venueType: {
+      type: "string",
+      enum: ["dex"],
+      description:
+        "The venue type of the exchange, as `GET /exchanges` lists it. Always `dex` here; a listing of instruments of a centralized exchange says `cex`.",
+      example: "dex",
+    },
+    minTvlUsd: {
+      type: "number",
+      description:
+        "A pool with less liquidity than this (in US dollars) is not listed",
+      example: 10000,
+    },
+    limit: {
+      type: "integer",
+      description: "The most pools the listing has",
+      example: 50,
+    },
+  },
+} as const;
+
+export const PoolLinksSchema = {
+  description:
+    "HAL `_links` — protocol discovery for the pools listing of a decentralized exchange",
+  type: "object",
+  required: ["self"],
+  properties: {
+    self: {
+      allOf: [
+        {
+          $ref: "#/components/schemas/HalLink",
+        },
+      ],
+      description: "Link to this listing",
+    },
+  },
+  additionalProperties: {
+    allOf: [
+      {
+        $ref: "#/components/schemas/HalLink",
+      },
+    ],
+    description:
+      "Link to the pools listing of one of the exchange's protocols, keyed by its name. Present when that listing exists.",
+  },
+} as const;
+
+export const PoolDetailSchema = {
+  description: `A pool of a decentralized exchange that a live run can read. The listing is a place to start, not the
+whole market: a live run can read any pool of the protocol, listed or not.
+`,
+  type: "object",
+  required: [
+    "id",
+    "symbol",
+    "base",
+    "quote",
+    "baseAddress",
+    "quoteAddress",
+    "feePercent",
+    "tvlUsd",
+    "volume24hUsd",
+  ],
+  properties: {
+    id: {
+      type: "string",
+      pattern: "^0x[0-9a-f]{40}$",
+      description:
+        "The pool's address, in lower case. It is the value to put in `instruments` of a live run's source.",
+      example: "0x52e65b17fb6e5ba00ed806f37afcd2daa50271ca",
+    },
+    symbol: {
+      type: "string",
+      description:
+        "The pair written `BASE/QUOTE`, the way the signals of a run on this pool name it (`instrument`)",
+      example: "WETH/USDG",
+    },
+    base: {
+      type: "string",
+      description: "Symbol of the base token",
+      example: "WETH",
+    },
+    quote: {
+      type: "string",
+      description: "Symbol of the quote token",
+      example: "USDG",
+    },
+    baseAddress: {
+      type: "string",
+      description: "Address of the base token, in lower case",
+      example: "0x0bd7d308f8e1639fab988df18a8011f41eacad73",
+    },
+    quoteAddress: {
+      type: "string",
+      description: "Address of the quote token, in lower case",
+      example: "0x5fc5360d0400a0fd4f2af552add042d716f1d168",
+    },
+    feePercent: {
+      type: "number",
+      description:
+        "The pool's fee tier, in percent (`0.05` is a 0.05 % fee). A protocol can have several pools of the same pair, one per fee tier.",
+      example: 0.01,
+    },
+    lastPrice: {
+      type: "number",
+      format: "double",
+      description:
+        "The price of one base token in the quote token, as the signals of a run on this pool name the pair. It is as of `meta.updatedAt`, so up to one hour old. Absent when there is no price for the pool.",
+      example: 2411.285967,
+    },
+    volume24h: {
+      type: "number",
+      format: "double",
+      description:
+        "What traded in the pool over the last 24 hours, in the quote token, the same meaning as `volume24h` of an instrument of a centralized exchange. Absent when the quote token has no dollar price to convert from.",
+      example: 274033077.4,
+    },
+    tvlUsd: {
+      type: "number",
+      description: "The liquidity held by the pool, in US dollars",
+      example: 19857902.02,
+    },
+    volume24hUsd: {
+      type: "number",
+      description:
+        "What traded in the pool over the last 24 hours, in US dollars",
+      example: 273876056.45,
+    },
+    createdAt: {
+      type: "string",
+      format: "date-time",
+      description: "When the pool was created. Absent when it is not known",
+      example: "2026-07-02T20:51:08Z",
     },
   },
 } as const;
@@ -173,6 +459,7 @@ one doesn't.
   required: [
     "userId",
     "tier",
+    "scopes",
     "maxExecute",
     "maxRangeDays",
     "maxSweepCartesian",
@@ -192,6 +479,9 @@ one doesn't.
       type: "string",
       description: "Your current subscription tier.",
       example: "free",
+    },
+    scopes: {
+      $ref: "#/components/schemas/KeyScopes",
     },
     maxExecute: {
       type: "integer",
@@ -368,11 +658,17 @@ export const InstrumentDetailSchema = {
   description:
     "Exchange instrument with per-data-type coverage and market info",
   type: "object",
-  required: ["id", "base", "quote"],
+  required: ["id", "symbol", "base", "quote"],
   properties: {
     id: {
       type: "string",
       description: "Instrument identifier (e.g. currency pair)",
+      example: "BTC/USDT",
+    },
+    symbol: {
+      type: "string",
+      description:
+        "The instrument's name, the same as `id`. A pool of a decentralized exchange has the same field (`PoolDetail`), so both listings are read alike.",
       example: "BTC/USDT",
     },
     base: {
@@ -385,19 +681,26 @@ export const InstrumentDetailSchema = {
       description: "Quote currency",
       example: "USDT",
     },
+    settle: {
+      type: "string",
+      description: "Settlement currency. Present on a futures instrument only.",
+      example: "USDT",
+    },
     coverage: {
       $ref: "#/components/schemas/InstrumentCoverage",
     },
     lastPrice: {
       type: "number",
       format: "double",
-      description: "Last traded price",
+      description:
+        "Last traded price. Absent for an instrument with no recent price.",
       example: 84250.5,
     },
     volume24h: {
       type: "number",
       format: "double",
-      description: "Trading volume in the last 24 hours (in quote currency)",
+      description:
+        "Trading volume in the last 24 hours (in quote currency). Absent for an instrument with no recent volume.",
       example: 1234567.89,
     },
   },
@@ -456,7 +759,7 @@ export const CoverageWindowSchema = {
 export const ExchangeSchema = {
   description: "Exchange service provider",
   type: "object",
-  required: ["id", "name"],
+  required: ["id", "name", "venueType", "segments", "liveSegments"],
   properties: {
     id: {
       description: "Unique identifier for the exchange",
@@ -472,6 +775,34 @@ export const ExchangeSchema = {
       description: "Description of the exchange",
       type: "string",
       example: "Binance cryptocurrency exchange",
+    },
+    venueType: {
+      description:
+        "Venue category, written as the `venueType` of a live run's source: `cex` is a centralized exchange and `dex` a decentralized one. A `dex` exchange has no market data to prepare or backtest, so its id is not valid in the routes that take an `exchangeId`, except the two instruments routes, which list its pools (the instrument of a run on it is a pool's address).",
+      type: "string",
+      enum: ["cex", "dex"],
+      example: "cex",
+    },
+    segments: {
+      description:
+        "The segments the exchange offers, written as in the path of `GET /exchange/{exchangeId}/{segment}/instruments` and as the `segment` of a live run's source. For a `cex` exchange, its market segments (`spot`, `futures`: the ones its instrument catalogues are served under); for a `dex` exchange, the protocols whose pools a run can read.",
+      type: "array",
+      minItems: 1,
+      uniqueItems: true,
+      items: {
+        type: "string",
+      },
+      example: ["spot", "futures"],
+    },
+    liveSegments: {
+      description:
+        "The segments among `segments` for which live data is published, so the ones a live run can read: a live run on any other segment of the exchange is refused with `400`. It can be empty (an exchange whose live data is not published yet).",
+      type: "array",
+      uniqueItems: true,
+      items: {
+        type: "string",
+      },
+      example: ["spot"],
     },
   },
 } as const;
@@ -553,11 +884,10 @@ what omitting it means, depends on the source:
 * Managed exchange, \`ticker\` or \`funding\` — one of \`1s\`, \`5s\`, \`1m\`, \`3m\`, \`5m\`, \`15m\`,
   \`30m\`, \`1h\`, \`2h\`, \`4h\`, \`8h\`, \`12h\`, \`1d\`, \`1w\`, \`1q\`; any other label returns \`400\`.
   Omitted = \`1s\`, the publisher's native cadence.
-* Managed exchange, \`kline\` — one of \`1s\`, \`1m\`, \`5m\`, \`15m\`, \`30m\`, \`1h\`, \`4h\`, \`1d\`;
-  any other label, including \`5s\`, \`3m\` and \`8h\`, returns \`400\` and names the accepted
-  ones. Omitted = \`1s\`. This is the width of the bars a run reads: it is chosen here,
-  once, and the same strategy can be run at several cadences by preparing the range at
-  each.
+* Managed exchange, \`kline\` — the same labels as above, \`1s\` to \`1q\`; a label that is
+  not a whole number of seconds returns \`400\`. Omitted = \`1s\`. This is the width of the
+  bars a run reads: it is chosen here, once, and the same strategy can be run at
+  several cadences by preparing the range at each.
 * Dataset (\`exchangeId: user\`) — omitted = the dataset version's own discovered
   \`cadence\` (see \`DatasetVersion.cadence\`), served as-is. Any cadence equal to or
   coarser than it and an exact multiple of it is accepted, including ones outside the
@@ -2214,9 +2544,11 @@ dataset covers.
     type: {
       type: "string",
       enum: ["ticker", "klines"],
-      description: `\`ticker\` for an upload or a \`dex\` import with no \`cadence\` requested (native per-trade
-data). \`klines\` for a \`dex\` import that requested a candle \`cadence\` — pre-aggregated
-bars rather than raw ticks. Purely informational; both shapes are read the same way.
+      description: `\`ticker\` for an upload, a \`dex\` import with no \`cadence\` requested (native per-trade
+data) or a \`cex\` import with \`dataType: ticker\`. \`klines\` for a \`dex\` import that
+requested a candle \`cadence\` — pre-aggregated bars rather than raw ticks — or a \`cex\`
+import with \`dataType: klines\`. Purely informational; both shapes are read the same
+way.
 `,
       example: "ticker",
     },
@@ -2490,11 +2822,12 @@ not declared by the caller.
     cadence: {
       type: "string",
       description: `The cadence discovered from the data's own timestamps. Either a fixed grid — \`1s\`,
-\`5s\`, \`15s\`, \`1m\`, \`5m\`, \`15m\`, \`30m\`, \`1h\`, \`4h\`, \`1d\` — when at least half the
-intervals between consecutive rows fall on that step (small clock jitter tolerated), or
-\`rt\`: native data at the rate it was captured, each row at its own timestamp with no
-fixed step — per-trade on-chain swaps, block-spaced or sub-second ticks, irregular
-intervals. An \`rt\` dataset can be resampled to any fixed cadence at prepare time.
+\`5s\`, \`15s\`, \`1m\`, \`3m\`, \`5m\`, \`15m\`, \`30m\`, \`1h\`, \`2h\`, \`4h\`, \`8h\`, \`12h\`, \`1d\`,
+\`1w\` — when at least half the intervals between consecutive rows fall on that step
+(small clock jitter tolerated), or \`rt\`: native data at the rate it was captured, each
+row at its own timestamp with no fixed step — per-trade on-chain swaps, block-spaced
+or sub-second ticks, irregular intervals. An \`rt\` dataset can be resampled to any
+fixed cadence at prepare time.
 `,
       example: "1s",
     },
@@ -2593,7 +2926,8 @@ fact you poll — not tied to how recently the failure happened.
 export const DatasetImportRequestSchema = {
   type: "object",
   description: `\`POST /datasets/imports\`'s request body. A common block plus one type-specific block,
-selected by \`type\` — \`dex\` is the only value today.
+selected by \`type\`: \`dex\` (block \`dex\`) or \`cex\` (block \`cex\`), the two \`venueType\`s of
+\`GET /exchanges\`.
 `,
   required: ["name", "instrument", "from", "to", "type"],
   properties: {
@@ -2622,24 +2956,60 @@ request wider than that ceiling is \`400\`, regardless of source type.
     },
     cadence: {
       type: "string",
-      enum: ["1s", "1m", "5m"],
-      description: `Optional. Omitted/blank keeps native per-trade event cadence — each swap at its own
-timestamp, so the resulting version's \`cadence\` is \`rt\` unless the swaps happen to sit
-on a fixed grid (see \`DatasetVersion.cadence\`). Set to \`1s\`, \`1m\` or
-\`5m\` instead to get pre-aggregated candles at that width rather than raw trades (the
-resulting dataset's \`type\` becomes \`klines\`); any other value is \`400\`. Not every
-network supports every cadence — an unsupported combination fails asynchronously, not
-at request time (see \`DatasetImportState.error\`).
+      enum: [
+        "1s",
+        "5s",
+        "1m",
+        "3m",
+        "5m",
+        "15m",
+        "30m",
+        "1h",
+        "2h",
+        "4h",
+        "8h",
+        "12h",
+        "1d",
+        "1w",
+        "1q",
+      ],
+      description: `Optional; what it means, and what it accepts, depends on \`type\`. Any other value is
+\`400\`.
+
+* \`dex\` — omitted/blank keeps native per-trade event cadence: each swap at its own
+  timestamp, so the resulting version's \`cadence\` is \`rt\` unless the swaps happen to
+  sit on a fixed grid (see \`DatasetVersion.cadence\`). Set to \`1s\`, \`1m\` or \`5m\`
+  instead to get pre-aggregated candles at that width rather than raw trades (the
+  resulting dataset's \`type\` becomes \`klines\`). Not every network supports every
+  cadence — an unsupported combination fails asynchronously, not at request time (see
+  \`DatasetImportState.error\`).
+* \`cex\` — one of \`1s\`, \`5s\`, \`1m\`, \`3m\`, \`5m\`, \`15m\`, \`30m\`, \`1h\`, \`2h\`, \`4h\`, \`8h\`,
+  \`12h\`, \`1d\`, \`1w\`, \`1q\`, whether \`dataType\` is \`ticker\` or \`klines\`. Omitted = the
+  finest cadence every part of the range holds.
+
+For \`cex\` the bars are built from the finest data every part of the range holds. A
+\`cadence\` finer than that, or not an exact multiple of it, fails the import
+asynchronously (\`failed\`; the \`error\` names the finest cadence the range holds) rather
+than returning a dataset with a different cadence from the one asked for. So a range
+whose history changes cadence part-way (from \`1m\` to \`1s\`, say) comes out entirely at
+the coarser one when \`cadence\` is omitted: the dataset has no gap that is only a
+change of cadence.
 `,
     },
     type: {
       type: "string",
-      enum: ["dex"],
-      description: "The source to fetch from. `dex` is the only value today.",
-      example: "dex",
+      enum: ["dex", "cex"],
+      description: `The kind of venue to import from, the same two values as the \`venueType\` of
+\`GET /exchanges\`: \`dex\` — a pool/pair's own on-chain market (block \`dex\`) — or \`cex\` —
+a centralized exchange's market history (block \`cex\`).
+`,
+      example: "cex",
     },
     dex: {
       $ref: "#/components/schemas/DatasetImportDexRequest",
+    },
+    cex: {
+      $ref: "#/components/schemas/DatasetImportCexRequest",
     },
   },
 } as const;
@@ -2697,6 +3067,45 @@ import rather than silently fetching from the wrong pool. Ignored if the top-lev
     id: "uniswap",
     version: "v3",
     contract: "0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640",
+  },
+} as const;
+
+export const DatasetImportCexRequestSchema = {
+  type: "object",
+  description: `The \`cex\` source's own fields — required when \`type\` is \`cex\`. They name a market the way
+\`GET /exchanges\` and the instruments routes do: \`exchange\` is the \`id\` of a centralized
+exchange, \`segment\` one of its \`segments\`.
+`,
+  required: ["exchange", "segment", "dataType"],
+  properties: {
+    exchange: {
+      type: "string",
+      description: `The id of a centralized exchange (\`venueType\` \`cex\`) of \`GET /exchanges\`, lower-case.
+A decentralized exchange's id is \`400\`: import its pools with \`type: dex\`.
+`,
+      example: "binance",
+    },
+    segment: {
+      type: "string",
+      enum: ["spot"],
+      description: `The market segment, one of the exchange's \`segments\`. \`spot\` is the only segment a
+\`cex\` import takes today, which matches \`instrument\` being a plain spot pair.
+`,
+      example: "spot",
+    },
+    dataType: {
+      type: "string",
+      enum: ["ticker", "klines"],
+      description: `What to import, and the resulting dataset's \`type\`: \`ticker\` — the exchange's ticker
+series — or \`klines\` — its aggregated bars (open, high, low, close and volume).
+`,
+      example: "klines",
+    },
+  },
+  example: {
+    exchange: "binance",
+    segment: "spot",
+    dataType: "klines",
   },
 } as const;
 
@@ -2767,7 +3176,8 @@ import's doesn't, until this source finishes fetching it.
       type: "string",
       description: `A human-readable reason, present when \`status\` is \`failed\` — an unresolvable
 pool/pair, no data in the requested range, a range older than the configured source
-retains, the fetch exceeding your tier's time ceiling, or any of
+retains, a \`cex\` \`cadence\` finer than the range holds (the message names the finest
+one), the fetch exceeding your tier's time ceiling, or any of
 \`DatasetUploadState.error\`'s own ingest-side reasons once fetching hands off to it.
 Durably recorded, same as on the upload path.
 `,
@@ -2781,6 +3191,28 @@ Durably recorded, same as on the upload path.
       ],
       description: "Present when `status` is `ready` or `failed`.",
     },
+  },
+} as const;
+
+export const KeyScopesSchema = {
+  type: "object",
+  description: `What your API key may do, as a map from a resource to the actions allowed on it. Names are
+lower case: \`{ "backtests": ["read", "write", "execute"], "exchanges": ["read"] }\`. A key
+with no scopes is \`{}\`. \`GET /account\` and \`POST /auth/token\` return the same map for the
+same key. The API reports the scopes of a key; it does not yet refuse an operation because
+a scope is missing.
+`,
+  additionalProperties: {
+    type: "array",
+    description:
+      "The actions allowed on this resource (for example `read`, `write`, `execute`).",
+    items: {
+      type: "string",
+    },
+  },
+  example: {
+    backtests: ["read", "write", "execute"],
+    exchanges: ["read"],
   },
 } as const;
 
@@ -2804,13 +3236,7 @@ export const AuthTokenResponseSchema = {
       example: 3600,
     },
     scopes: {
-      type: "array",
-      description:
-        "Scopes granted to this token. Reserved for future use; currently always empty.",
-      items: {
-        type: "string",
-      },
-      example: [],
+      $ref: "#/components/schemas/KeyScopes",
     },
     tier: {
       type: "string",
@@ -2848,23 +3274,28 @@ export const LiveSourceSchema = {
   properties: {
     venueType: {
       type: "string",
-      example: "cx",
+      enum: ["cex", "dex"],
+      example: "cex",
       description:
-        "Venue category. `cx` (centralized exchange) is the only one live runs support today.",
+        'Venue category. `cex` is a centralized exchange and `dex` is one pool on a decentralized exchange, which takes its own `exchange`, `segment`, `type` and `instruments` (see "Sources" in the Live execution guide). `cx` and `dx`, the spellings used before, are still read as `cex` and `dex`; the run always reports the new ones.',
     },
     exchange: {
       type: "string",
       example: "binance",
+      description:
+        "The exchange id, as `GET /exchanges` lists it. For a `dex` source, the chain the pool is on; `robinhood` is the only one today.",
     },
     segment: {
       type: "string",
       example: "spot",
+      description:
+        "The segment, as `GET /exchanges` lists it for that exchange, among its `liveSegments` (a segment with no live data is refused with `400`). For a `cex` source, the market segment (`spot` today); for a `dex` source, the protocol of the pool, `uniswap-v3` the only one today.",
     },
     type: {
       type: "string",
       enum: ["ticker", "kline"],
       description:
-        "Both `ticker` and `kline` connect to the lightest (fastest) cadence available for the exchange — today, 1 tick/second on every supported exchange. Choosing a specific cadence is not offered yet.",
+        "Both `ticker` and `kline` connect to the lightest (fastest) cadence available for the exchange — today, 1 tick/second on every supported exchange. Choosing a specific cadence is not offered yet. A `dex` source supports only `kline`: one candle per second of the pool's trades.",
     },
     instruments: {
       type: "array",
@@ -2873,7 +3304,7 @@ export const LiveSourceSchema = {
       },
       example: ["BTC/USDT"],
       description:
-        'The instruments the run reads. For a run started with a list, that list as sent; for one started without `instruments`, or with `["*"]`, what the start resolved: the list of pairs the compilation of the strategy records as the instruments it accepts, when it records one, or `["*"]` for every instrument the exchange/segment offers (tier-gated). An entry is written `BASE/QUOTE` and either side can be `*` to mean any, such as any base paired with USDT. Symbols are not case-sensitive and spaces around them are ignored, so `btc/usdt` and `BTC/USDT` are the same instrument.',
+        'The instruments the run reads. For a run started with a list, that list as sent; for one started without `instruments`, or with `["*"]`, what the start resolved: the list of pairs the compilation of the strategy records as the instruments it accepts, when it records one, or `["*"]` for every instrument the exchange/segment offers (tier-gated). An entry is written `BASE/QUOTE` and either side can be `*` to mean any, such as any base paired with USDT. Symbols are not case-sensitive and spaces around them are ignored, so `btc/usdt` and `BTC/USDT` are the same instrument. A `dex` source holds exactly one entry, the address of its pool.',
     },
   },
 } as const;
@@ -2886,23 +3317,28 @@ export const LiveSourceRequestSchema = {
   properties: {
     venueType: {
       type: "string",
-      example: "cx",
+      enum: ["cex", "dex"],
+      example: "cex",
       description:
-        "Venue category. `cx` (centralized exchange) is the only one live runs support today.",
+        'Venue category. `cex` is a centralized exchange and `dex` is one pool on a decentralized exchange, which takes its own `exchange`, `segment`, `type` and `instruments` (see "Sources" in the Live execution guide). `cx` and `dx`, the spellings used before, are still read as `cex` and `dex`; the run always reports the new ones.',
     },
     exchange: {
       type: "string",
       example: "binance",
+      description:
+        "The exchange id, as `GET /exchanges` lists it. For a `dex` source, the chain the pool is on; `robinhood` is the only one today.",
     },
     segment: {
       type: "string",
       example: "spot",
+      description:
+        "The segment, as `GET /exchanges` lists it for that exchange, among its `liveSegments` (a segment with no live data is refused with `400`). For a `cex` source, the market segment (`spot` today); for a `dex` source, the protocol of the pool, `uniswap-v3` the only one today.",
     },
     type: {
       type: "string",
       enum: ["ticker", "kline"],
       description:
-        "Both `ticker` and `kline` connect to the lightest (fastest) cadence available for the exchange — today, 1 tick/second on every supported exchange. Choosing a specific cadence is not offered yet.",
+        "Both `ticker` and `kline` connect to the lightest (fastest) cadence available for the exchange — today, 1 tick/second on every supported exchange. Choosing a specific cadence is not offered yet. A `dex` source supports only `kline`: one candle per second of the pool's trades.",
     },
     instruments: {
       type: "array",
@@ -2910,7 +3346,7 @@ export const LiveSourceRequestSchema = {
         type: "string",
       },
       example: ["BTC/USDT"],
-      description: `Which instruments the run reads. A QTScript strategy can declare which instruments it accepts with an \`instruments\` line in its source. When the compilation of the strategy records that selection as a list of pairs, leaving \`instruments\` out, or sending \`["*"]\`, takes that list; otherwise the run reads every instrument the exchange/segment offers. A list of instruments is taken as sent, and \`[]\` and \`null\` are refused with \`400\`. An entry is written \`BASE/QUOTE\`; either side can be \`*\` to mean any: any base can be paired with USDT, and BTC can be paired with any quote. Entries are not case-sensitive and spaces around them are ignored, so \`btc/usdt\` and \`BTC/USDT\` are the same instrument. An entry that is not of that form (no \`/\`, an empty side, a \`.\` or a space inside a side, or a \`*\` mixed with other characters of a side) makes the run fail when it starts. Plan limits: a list with an entry that has a \`*\` on a side counts like \`["*"]\` and only plans that include the wildcard accept it; the other entries are counted one by one. The instruments the run actually reads come back in the run's \`sources\`.`,
+      description: `Which instruments the run reads. A QTScript strategy can declare which instruments it accepts with an \`instruments\` line in its source. When the compilation of the strategy records that selection as a list of pairs, leaving \`instruments\` out, or sending \`["*"]\`, takes that list; otherwise the run reads every instrument the exchange/segment offers. A list of instruments is taken as sent, and \`[]\` and \`null\` are refused with \`400\`. An entry is written \`BASE/QUOTE\`; either side can be \`*\` to mean any: any base can be paired with USDT, and BTC can be paired with any quote. Entries are not case-sensitive and spaces around them are ignored, so \`btc/usdt\` and \`BTC/USDT\` are the same instrument. An entry that is not of that form (no \`/\`, an empty side, a \`.\` or a space inside a side, or a \`*\` mixed with other characters of a side) makes the run fail when it starts. Plan limits: a list with an entry that has a \`*\` on a side counts like \`["*"]\` and only plans that include the wildcard accept it; the other entries are counted one by one. The instruments the run actually reads come back in the run's \`sources\`. A \`dex\` source needs exactly one entry, the address of its pool (\`0x\` and 40 hexadecimal digits, not case-sensitive): it cannot be left out and \`*\` is not accepted.`,
     },
   },
 } as const;
@@ -3164,12 +3600,15 @@ export const LiveRunSchema = {
 stack trace or an internal message. Either \`resource: ...\` (the platform stopped the run for
 exceeding its resource allowance; the text says which limit) or one of a fixed set of sentences for
 a \`FAILED\` run: the strategy cannot consume the source type the run was started with, the run's
-definition was refused, the run could not start after several attempts, the strategy failed while
-processing data, the run lost its data feed, or the generic \`The run failed.\`. The set may grow:
+definition was refused, the pool address of a \`dex\` run is not a pool of its protocol on its chain,
+the platform has no room to follow the pool of a \`dex\` run, the run could not start after several
+attempts, the strategy failed while processing data, the run lost its data feed, or the generic
+\`The run failed.\`. The set may grow:
 read an unrecognised sentence as a failure and do not parse it. A \`FAILED\` run usually stays
 \`desired: RUNNING\` until you stop it, and counts as active (\`409\` on a new start, and toward your
-live-run limit) until then; one that can never run because its strategy cannot consume its source
-type is stopped by the platform itself (\`desired: STOPPED\`), so it holds no place.
+live-run limit) until then; one that cannot run, and will not by waiting, because its strategy cannot
+consume its source type or because the pool of a \`dex\` run is not a pool or has no room to be followed,
+is stopped by the platform itself (\`desired: STOPPED\`), so it holds no place.
 `,
     },
     sources: {
@@ -3458,12 +3897,15 @@ export const LiveRunSummarySchema = {
 stack trace or an internal message. Either \`resource: ...\` (the platform stopped the run for
 exceeding its resource allowance; the text says which limit) or one of a fixed set of sentences for
 a \`FAILED\` run: the strategy cannot consume the source type the run was started with, the run's
-definition was refused, the run could not start after several attempts, the strategy failed while
-processing data, the run lost its data feed, or the generic \`The run failed.\`. The set may grow:
+definition was refused, the pool address of a \`dex\` run is not a pool of its protocol on its chain,
+the platform has no room to follow the pool of a \`dex\` run, the run could not start after several
+attempts, the strategy failed while processing data, the run lost its data feed, or the generic
+\`The run failed.\`. The set may grow:
 read an unrecognised sentence as a failure and do not parse it. A \`FAILED\` run usually stays
 \`desired: RUNNING\` until you stop it, and counts as active (\`409\` on a new start, and toward your
-live-run limit) until then; one that can never run because its strategy cannot consume its source
-type is stopped by the platform itself (\`desired: STOPPED\`), so it holds no place.
+live-run limit) until then; one that cannot run, and will not by waiting, because its strategy cannot
+consume its source type or because the pool of a \`dex\` run is not a pool or has no room to be followed,
+is stopped by the platform itself (\`desired: STOPPED\`), so it holds no place.
 `,
     },
     sources: {

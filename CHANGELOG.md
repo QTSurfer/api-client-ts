@@ -1,5 +1,17 @@
 # @qtsurfer/api-client
 
+## 0.25.0
+
+### Minor Changes
+
+- Discover CEX and DEX venues, list typed pool catalogues, start pool kline live runs, and import centralized exchange history with the full cadence vocabulary from OpenAPI 0.128.36.
+
+  Instrument routes now return `InstrumentCatalogueResponse` (`InstrumentListResponse | PoolListResponse`), distinguished by `meta.venueType`. Instruments require `symbol`; unknown price, volume, and pool creation dates are omitted. Exchange discovery includes required `venueType`, `segments`, and `liveSegments`; live sources use `cex` and `dex`.
+
+  Read resource-to-actions `KeyScopes` from tokens and accounts instead of a scope list. The API reports these grants but does not yet enforce missing scopes.
+
+  Hourly downloads cover the last seven days, expose provisional and timestamp-unit headers through `response`, and return structured `ResponseError.reason` and `ErrorNextCall` recovery details. Lastra uses `application/vnd.qtsurfer.lastra` and microsecond timestamps; Parquet remains in milliseconds. Recent hours can be provisional or `NOT_YET_AVAILABLE`; honour `Retry-After` on retryable failures and use dataset imports for older history.
+
 ## 0.24.0
 
 ### Minor Changes

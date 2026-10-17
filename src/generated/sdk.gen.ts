@@ -251,6 +251,18 @@ export const getAccountUsage = <ThrowOnError extends boolean = false>(
 
 /**
  * List the available exchanges
+ * The exchanges the platform knows, centralized and decentralized, each with its `venueType` and the
+ * `segments` it offers. Ids, venue types and segments are lower-case, and are written the same way
+ * wherever the API takes them: `/exchange/binance/spot/instruments`, and the `exchange`, `venueType`
+ * and `segment` of a live run's source.
+ *
+ * `venueType` is `cex` for a centralized exchange and `dex` for a decentralized one. The `segments` of a
+ * `cex` exchange are the market segments its instrument catalogues are served under (`spot`, `futures`);
+ * its `liveSegments`, among them, are those a live run can read, because live data is published for them.
+ * A `dex` exchange has no market data to prepare or backtest, so its id is `400` in the routes that take an
+ * `exchangeId`, except the two instruments routes: its `segments` are the protocols whose pools a run can
+ * read, and those routes list the pools, since the instrument of a run on it is a pool's address.
+ *
  */
 export const listExchanges = <ThrowOnError extends boolean = false>(
   options?: Options<ListExchangesData, ThrowOnError>
@@ -272,6 +284,10 @@ export const listExchanges = <ThrowOnError extends boolean = false>(
  * confirms the served `segment` (`spot`); HAL `_links` carry `self` plus the
  * `spot` / `futures` segment-discovery links.
  *
+ * For a decentralized exchange (`venueType` `dex` in `GET /exchanges`) the instruments are its pools,
+ * each a `PoolDetail`, and the default segment is the first one the exchange lists (`uniswap-v3` for
+ * `robinhood`).
+ *
  */
 export const listInstruments = <ThrowOnError extends boolean = false>(
   options: Options<ListInstrumentsData, ThrowOnError>
@@ -292,6 +308,11 @@ export const listInstruments = <ThrowOnError extends boolean = false>(
  * per-data-type coverage and market info. HAL `_links` carry `self` plus the
  * `spot` / `futures` segment-discovery links; the default-segment shortcut is
  * `GET /exchange/{exchangeId}/instruments` (spot).
+ *
+ * For a decentralized exchange the segments are its protocols (`uniswap-v3` for `robinhood`) and the
+ * instruments are its pools, each a `PoolDetail`: the 50 with most volume in the last 24 hours among
+ * those with at least 10,000 US dollars of liquidity, refreshed every hour. The list is a place to
+ * start, not the whole market: a live run can read any pool of the protocol, listed or not.
  *
  */
 export const listSegmentInstruments = <ThrowOnError extends boolean = false>(
@@ -316,9 +337,33 @@ export const listSegmentInstruments = <ThrowOnError extends boolean = false>(
  *
  * One segment = one hour, aligned to UTC. The `hour` query parameter selects
  * the segment and must match `YYYY-MM-DDTHH` (no minutes/seconds, no timezone
- * suffix). Example: `hour=2026-01-15T10` returns `h10.lastra` for
- * 2026-01-15, covering `[10:00:00Z, 11:00:00Z)`. Hours not yet available
- * return `404`.
+ * suffix). Example: `hour=2026-10-15T10` is the segment `h10.lastra` of
+ * 2026-10-15, covering `[10:00:00Z, 11:00:00Z)`. The hour has to be one of the last 7 days (see
+ * below): read the example as the shape of the value.
+ *
+ * **Which hours.** The last 7 days: an hour that started no more than 7 days before the
+ * request and has ended. This route gives one hour of one instrument, fast; it is not how to
+ * get older history or a range. An older hour is `400` with `reason: OUTSIDE_WINDOW`, and the
+ * error carries `next`, the `POST /datasets/imports` request that imports exactly that hour
+ * as a dataset (add a `name`); a longer span is imported the same way, within your plan's
+ * limits.
+ *
+ * **The hour in progress and the last hours.** The hour in progress, and an hour that has ended
+ * but is not stored yet, can be answered with what has been received so far, marked provisional:
+ * `200` with `X-Data-Status: provisional` and `X-Data-Through`, the instant of the last row.
+ * Not every deployment of the service gives provisional answers: where it does not, those hours
+ * are `404` with `reason: NOT_YET_AVAILABLE` and a `Retry-After`, and a client that needs them
+ * handles both. A provisional answer is not to keep: it can still grow, and the stored hour
+ * replaces it once there is one. It takes seconds to build, longer the further the hour has gone,
+ * and the service limits how many it builds at once (`503` with `Retry-After`). When there is
+ * nothing to give, because the instrument has no rows in the hour yet or what has been received
+ * does not reach back to the start of the hour, the answer is also `404` with
+ * `reason: NOT_YET_AVAILABLE`.
+ *
+ * **Timestamps.** In a Lastra response the `ts` column holds microseconds since the epoch,
+ * declared by `ts_unit: micros` in the column's metadata and by the response header
+ * `X-Ts-Unit: micros`. In a Parquet response the timestamp column is a `TIMESTAMP` in
+ * milliseconds.
  *
  * A `format=parquet` query parameter switches the response to on-the-fly
  * Parquet conversion via [lastra-convert](https://github.com/QTSurfer/lastra-convert)
@@ -362,6 +407,9 @@ export const downloadTickers = <ThrowOnError extends boolean = false>(
  * Klines use the same columnar layout as tickers — readers that handle one
  * format read the other with the same code. Use this endpoint when a
  * per-tick payload would be too large for the window of interest.
+ *
+ * The hours served (the last 7 days; the hour in progress and the last hours may be provisional), the timestamps
+ * (`ts` in microseconds, `X-Ts-Unit: micros`) and the errors are those of the tickers route.
  *
  */
 export const downloadKlines = <ThrowOnError extends boolean = false>(
@@ -1236,8 +1284,18 @@ export const getDatasetUpload = <ThrowOnError extends boolean = false>(
  * as a dataset version indistinguishable from an uploaded one once it's ready. Poll
  * `GET /datasets/{datasetId}/imports/{importId}` for progress.
  *
- * `type` selects the source. `dex` — history over a pool/pair's own on-chain market — is the
- * only value today; other source types join this same endpoint later.
+ * `type` selects the kind of venue the history comes from, with the same two values as the
+ * `venueType` of `GET /exchanges`: `dex` — history over a pool/pair's own on-chain market —
+ * and `cex` — the history of a centralized exchange's market, kept by the platform. Each
+ * has its own block (`dex`, `cex`). The exchange id of a `cex` import has to be a centralized
+ * exchange of `GET /exchanges`; a decentralized one (`robinhood`, say) is `400`, and is imported
+ * with `type: dex`.
+ *
+ * A `cex` import covers one instrument over a range: the API reads that range of the
+ * exchange's history, builds the bars of the requested `cadence` from the finest data it has
+ * for it, and stores the result as a dataset version, exactly as for an upload. `cex.dataType`
+ * picks tickers or klines and is also the resulting dataset's `type`. The range is capped by
+ * your tier like any import (`maxImportRangeHours` of `GET /account`).
  *
  * A `dex` import has two data shapes, chosen by the top-level `cadence`:
  *
@@ -1388,7 +1446,16 @@ export const getLive = <ThrowOnError extends boolean = false>(
  * (fastest) cadence available for the exchange — today that is 1 tick/second on every
  * supported exchange; choosing among several cadences is not offered yet.
  *
- * `instruments` can be left out. A QTScript strategy can declare which instruments it accepts with an `instruments`
+ * `venueType` is `cex` (a centralized exchange) or `dex` (one pool on a decentralized exchange). A `dex` source reads one
+ * pool, takes only `kline`, and needs the pool's address as its single instrument. See the "Live execution" guide,
+ * "Sources".
+ *
+ * `venueType`, `exchange` and `segment` have to be ones `GET /exchanges` lists together: the exchange under that
+ * venue type, and the segment among its `liveSegments`. Case and the spaces around a value do not matter, and the
+ * run reports them back in lower case (`cx`, the older spelling of `cex`, is still read). Anything else is refused
+ * with `400`, naming what the list has.
+ *
+ * `instruments` can be left out, except for a `dex` source. A QTScript strategy can declare which instruments it accepts with an `instruments`
  * line in its source; when the compilation of the strategy records that selection as a list of pairs, a
  * start that leaves `instruments` out, or sends `["*"]`, takes that list, and otherwise the run reads every
  * instrument the exchange/segment offers. A list you send is taken as sent. Either side of an entry can be `*`

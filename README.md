@@ -69,7 +69,7 @@ pluggable token stores so callers don't reinvent that plumbing.
 All operations are exported as standalone functions; every operation accepts an `Options` object and returns `{ data, error, response }`.
 
 The table is exhaustive: `src/generated/` is produced from the OpenAPI spec, so **all 48 operations**
-the spec declares are exported. The rows below describe **spec version 0.128.25**, which is versioned
+the spec declares are exported. The rows below describe **spec version 0.128.36**, which is versioned
 independently of this package.
 
 | Function | Method | Path | Purpose |
@@ -78,8 +78,8 @@ independently of this package.
 | `getAccount` | GET | `/account` | Read the authenticated account tier and limits, including the full-grid sweep limit |
 | `getAccountUsage` | GET | `/account/usage` | Read current resource and storage use |
 | `listExchanges` | GET | `/exchanges` | List the available exchanges |
-| `listInstruments` | GET | `/exchange/{exchangeId}/instruments` | List an exchange's instruments (default spot segment) |
-| `listSegmentInstruments` | GET | `/exchange/{exchangeId}/{segment}/instruments` | List an exchange segment's instruments |
+| `listInstruments` | GET | `/exchange/{exchangeId}/instruments` | List CEX instruments or DEX pools in the default segment |
+| `listSegmentInstruments` | GET | `/exchange/{exchangeId}/{segment}/instruments` | List CEX instruments or DEX pools in a discovered segment |
 | `downloadTickers` | GET | `/exchange/{exchangeId}/tickers/{base}/{quote}` | Download one hour of tickers as a Lastra segment |
 | `downloadKlines` | GET | `/exchange/{exchangeId}/klines/{base}/{quote}` | Download one hour of klines as a Lastra segment |
 | `listStrategies` | GET | `/strategies` | List your registered strategies, optionally including deleted strategies and their deletion times |
@@ -105,7 +105,7 @@ independently of this package.
 | `openDatasetUpload` | POST | `/datasets/{datasetId}/uploads` | Open an upload session for a later dataset version |
 | `finalizeDatasetUpload` | POST | `/datasets/{datasetId}/uploads/{uploadId}/finalize` | Queue ingest after uploading a file |
 | `getDatasetUpload` | GET | `/datasets/{datasetId}/uploads/{uploadId}` | Get an upload's ingestion state |
-| `importDataset` | POST | `/datasets/imports` | Create a dataset by importing external history |
+| `importDataset` | POST | `/datasets/imports` | Create a dataset by importing CEX market history or DEX pool history |
 | `getDatasetImport` | GET | `/datasets/{datasetId}/imports/{importId}` | Get an import's fetch and ingestion state |
 | `startLive` | POST | `/strategy/{strategyId}/live` | Start a compiled strategy on a live feed; request a sandbox run with `sandbox: true`, set its warm-up replay window with `warmFrom`, simulate fills and equity with `paper`, or request a plain WebSocket stream URL |
 | `getLive` | GET | `/strategy/{strategyId}/live` | Read a strategy's current or most recent live run |
@@ -124,6 +124,32 @@ independently of this package.
 | `mintLiveConnectionToken` | POST | `/live/token` | Mint a short-lived Centrifugo connection token |
 
 All generated types (`Exchange`, `InstrumentDetail`, `BacktestJobResult`, `PrepareJobState`, `ResultMap`, `LiveRunStats`, `LiveRunDetail`, `LiveRunWithStream`, `LiveStreamUrl`, `LiveStreamRevoked`, `LivePaper`, `LivePaperAccount`, `LivePaperEquityPage`, `SendLiveCommandRequest`, `LiveCommandResult`, etc.) are re-exported from the root.
+
+### Venue discovery, history, and scopes
+
+`Exchange.venueType` is `cex` or `dex`; `segments` lists its catalogues and `liveSegments` the
+segments a live run can consume. Both instrument operations return `InstrumentCatalogueResponse`,
+a union of `InstrumentListResponse` and `PoolListResponse`, distinguished by `meta.venueType`.
+Pool `id` is the address used to start a DEX live run; `symbol` is its signal pair. Unknown prices,
+volumes, and pool creation dates are absent. DEX live sources require one pool address and `type: 'kline'`.
+New requests use `cex`/`dex`; the server still accepts the older `cx`/`dx` spelling.
+
+`DatasetImportRequest` accepts `type: 'cex'` with a `cex` block (`exchange`, `segment: 'spot'`,
+`dataType: 'ticker' | 'klines'`), or `type: 'dex'` with its `dex` block. CEX import and kline
+preparation support all fifteen cadence labels from `1s` through `1q`.
+
+`AuthTokenResponse.scopes` and `Account.scopes` use `KeyScopes`, a resource-to-actions map such
+as `{ exchanges: ['read'], backtests: ['read', 'execute'] }`; a key with none reports `{}`.
+The API currently reports these grants without refusing operations for missing scopes.
+
+Hourly downloads cover the last seven days. Lastra content is `application/vnd.qtsurfer.lastra`
+and its `ts` column uses microseconds (`X-Ts-Unit: micros`); Parquet timestamps use milliseconds.
+Inspect `response.headers` for `X-Data-Status: provisional` and `X-Data-Through`: provisional
+bytes may grow and must be fetched again to obtain the stored hour. Some deployments instead
+answer recent hours with `404` `NOT_YET_AVAILABLE` and `Retry-After`. `ResponseError.reason`
+distinguishes that case from `NO_DATA`, `OUTSIDE_WINDOW` (`400`, with `next` describing a dataset
+import), and `TEMPORARILY_UNAVAILABLE` (`503`, with `Retry-After`). Treat unknown reasons like an
+absent reason, and add caller-specific fields such as a dataset name to a suggested `ErrorNextCall`.
 
 `sendLiveCommand` sends a command to every execution behind an owned live run. The strategy must
 implement the engine's `CommandRequestHandler`; `202` means the command was accepted, not that the
