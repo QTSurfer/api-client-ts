@@ -42,3 +42,11 @@ jobs:
             || echo "Release already exists"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  reference-docs:
+    needs: publish
+    permissions:
+      contents: write
+    uses: ./.github/workflows/reference-docs.yml
+    with:
+      tag: ${{ github.ref_name }}
