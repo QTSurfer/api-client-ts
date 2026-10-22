@@ -75,7 +75,7 @@ pluggable token stores so callers don't reinvent that plumbing.
 All operations are exported as standalone functions; every operation accepts an `Options` object and returns `{ data, error, response }`.
 
 The table is exhaustive: `src/generated/` is produced from the OpenAPI spec, so **all 48 operations**
-the spec declares are exported. The rows below describe **spec version 0.128.37**, which is versioned
+the spec declares are exported. The rows below describe **spec version 0.128.46**, which is versioned
 independently of this package.
 
 | Function | Method | Path | Purpose |
@@ -126,10 +126,10 @@ independently of this package.
 | `sendLiveCommand` | POST | `/live/{runId}/commands` | Send a command to a running strategy without restarting it |
 | `getLiveRunSignals` | GET | `/live/{runId}/signals` | Page retained signals by time, instrument, or signal type (`paper` items only when output is `mix`) |
 | `getLiveRunPaper` | GET | `/live/{runId}/paper` | Read simulated accounts, open positions, equity, and KPIs for a paper-trading run |
-| `getLiveRunPaperEquity` | GET | `/live/{runId}/paper/equity` | Page the run's retained paper equity curve, optionally by quote currency or start time |
+| `getLiveRunPaperEquity` | GET | `/live/{runId}/paper/equity` | Read a paper account equity or instrument PnL curve with shaping and paging options |
 | `mintLiveConnectionToken` | POST | `/live/token` | Mint a short-lived Centrifugo connection token |
 
-All generated types (`Exchange`, `InstrumentDetail`, `BacktestJobResult`, `PrepareJobState`, `ResultMap`, `LiveRunStats`, `LiveRunDetail`, `LiveRunWithStream`, `LiveStreamUrl`, `LiveStreamRevoked`, `LivePaper`, `LivePaperAccount`, `LivePaperEquityPage`, `SendLiveCommandRequest`, `LiveCommandResult`, etc.) are re-exported from the root.
+All generated types (`Exchange`, `InstrumentDetail`, `BacktestJobResult`, `PrepareJobState`, `ResultMap`, `InsufficientScopeError`, `LiveRunStats`, `LiveRunDetail`, `LiveRunWithStream`, `LiveStreamUrl`, `LiveStreamRevoked`, `LivePaper`, `LivePaperAccount`, `LivePaperEquityCurve`, `SendLiveCommandRequest`, `LiveCommandResult`, etc.) are re-exported from the root.
 
 ### Venue discovery, history, and scopes
 
@@ -146,9 +146,30 @@ preparation support all fifteen cadence labels from `1s` through `1q`.
 
 `AuthTokenResponse.scopes` and `Account.scopes` use `KeyScopes`, a resource-to-actions map such
 as `{ exchanges: ['read'], backtests: ['read', 'execute'] }`; a key with none reports `{}`.
-A scope is one resource and one action; resources with no actions are omitted. The API reports
-these grants without refusing individual operations for missing scopes, although token issuance
-can reject a key with no scopes as described above.
+A scope is one resource and one action; resources with no actions are omitted. Protected
+operations reject a valid token whose key lacks the needed scope with a typed `403`
+`InsufficientScopeError` (`code: 'insufficient_scope'`, `required: 'resource:action'`). Update
+the key's grants and obtain a fresh token; retrying the same token cannot add a grant. This is
+distinct from `POST /auth/token` returning `403 apikey_without_scopes` before issuing a token.
+
+`ResponseError.retryable` says whether resending the same request may succeed; honor
+`Retry-After` when present. `JobState.retryable` reports whether a failed execution may succeed
+if submitted again.
+
+```ts
+const { data, error, response } = await listDatasets();
+if (error) {
+  if (response?.status === 403 && error.code === 'insufficient_scope' && 'required' in error) {
+    console.error(`Grant ${error.required} to this API key and obtain a fresh token.`);
+  } else if ('retryable' in error && error.retryable) {
+    console.error('Retry this request only after any Retry-After delay.');
+  } else {
+    throw error;
+  }
+} else {
+  console.log(data?.datasets);
+}
+```
 
 Hourly downloads cover the last seven days. Lastra content is `application/vnd.qtsurfer.lastra`
 and its `ts` column uses microseconds (`X-Ts-Unit: micros`); Parquet timestamps use milliseconds.

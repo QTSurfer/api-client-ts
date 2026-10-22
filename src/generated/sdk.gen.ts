@@ -15,6 +15,7 @@ import type {
   GetAccountUsageResponse,
   ListExchangesData,
   ListExchangesResponse,
+  ListExchangesError,
   ListInstrumentsData,
   ListInstrumentsResponse,
   ListInstrumentsError,
@@ -29,6 +30,7 @@ import type {
   DownloadKlinesError,
   ListStrategiesData,
   ListStrategiesResponse,
+  ListStrategiesError,
   CompileStrategyData,
   CompileStrategyResponse,
   CompileStrategyError,
@@ -76,6 +78,7 @@ import type {
   GetBacktestResultError,
   ListDatasetsData,
   ListDatasetsResponse,
+  ListDatasetsError,
   CreateDatasetData,
   CreateDatasetResponse,
   CreateDatasetError,
@@ -144,6 +147,7 @@ import type {
   GetLiveRunPaperEquityError,
   MintLiveConnectionTokenData,
   MintLiveConnectionTokenResponse,
+  MintLiveConnectionTokenError,
 } from "./types.gen";
 import { client as _heyApiClient } from "./client.gen";
 
@@ -273,7 +277,7 @@ export const listExchanges = <ThrowOnError extends boolean = false>(
 ) => {
   return (options?.client ?? _heyApiClient).get<
     ListExchangesResponse,
-    unknown,
+    ListExchangesError,
     ThrowOnError
   >({
     url: "/exchanges",
@@ -448,7 +452,7 @@ export const listStrategies = <ThrowOnError extends boolean = false>(
 ) => {
   return (options?.client ?? _heyApiClient).get<
     ListStrategiesResponse,
-    unknown,
+    ListStrategiesError,
     ThrowOnError
   >({
     security: [
@@ -672,7 +676,11 @@ export const getStrategyCode = <ThrowOnError extends boolean = false>(
  * **`exchangeId: user` is reserved for your own uploaded data.** Instead of a managed
  * exchange, it prepares from a dataset you created via `POST /datasets` (see the **Dataset**
  * endpoints) — send `datasetId` in place of `instrument`. See `PrepareRequest` below for the
- * two request shapes.
+ * two request shapes. A `ticker` prepare takes any dataset; a `kline` prepare takes a dataset
+ * whose `type` is `klines` (its rows are the bars, at its own cadence or a coarser exact
+ * multiple of it) and is `400` over any other, naming the dataset's type. The `type` that
+ * counts is the one of the version the prepare reads (the current one, or the one
+ * `datasetVersionId` pins), and it is read from the data: a file of candles is `klines`.
  *
  */
 export const prepareBacktest = <ThrowOnError extends boolean = false>(
@@ -1068,7 +1076,7 @@ export const listDatasets = <ThrowOnError extends boolean = false>(
 ) => {
   return (options?.client ?? _heyApiClient).get<
     ListDatasetsResponse,
-    unknown,
+    ListDatasetsError,
     ThrowOnError
   >({
     security: [
@@ -1829,6 +1837,25 @@ export const getLiveRunSignals = <ThrowOnError extends boolean = false>(
  * mark`, taken every minute of market time). Until either exists the account holds its
  * starting capital.
  *
+ * A run started with `accounts: instrument` has one account per instrument instead: each
+ * carries the `instrument` it is, with its own `initialFunding`, and none carries
+ * `instruments`. The accounts of such a run are never added together either.
+ *
+ * A position also says what it is worth. When the last mark valued it as it stands now, its
+ * entry in `openPositions` carries `markPrice` (the price it was valued at), `markedAtMs`
+ * (when) and `unrealisedPnl` (`base` times `markPrice`, minus `cost`). A position opened or
+ * changed since the last mark, which is at most about a minute old, has none of the three yet.
+ * The account says it for all its positions together: `unrealisedPnl` (their sum, `0` when it
+ * holds nothing) and `totalPnl` (with its `realisedPnl`); both are absent while any of its
+ * positions has no current mark.
+ *
+ * An account is shared by every instrument of its quote currency, so each account also says
+ * what it realised per instrument, in `instruments`: the trades, the realised PnL, its
+ * contribution as a percent of the account's starting capital, the position it holds, what
+ * that position is worth (`unrealisedPnl`, and `totalPnl` with the realised part) and its
+ * KPIs. It is exact for what was realised, and it is not how the instrument would have done
+ * on its own: its entries depended on what the others had locked from the same account.
+ *
  * Readable by the run's owner, and by anyone if the run is `public` and has reached the `live`
  * stage. A run started without a `paper` block answers `404`.
  *
@@ -1854,14 +1881,54 @@ export const getLiveRunPaper = <ThrowOnError extends boolean = false>(
 
 /**
  * Read a run's paper equity curve
- * The run's paper equity curve, oldest first, page by page. It is kept for the life of the
- * run, so unlike signals it has no moving window. Points are `equity` at every closed trade,
- * `mark` every minute of market time while positions are open, and `gap` where the run was
- * restarted with positions open: those positions are not carried over, so the curve has no
- * value there.
+ * One paper account's equity curve, oldest first, in the same shape as every other equity
+ * curve of this API (`EquityCurveResult`): `{points, meta}`, or `{timestamps, equities, meta}`
+ * with `outMode=SHORT`, shaped by the same `outMode`, `resample` and `differential` query
+ * parameters, with the account's `currency` and its `gaps` alongside. The curve is kept for
+ * the life of the run, so unlike signals it has no moving window.
  *
- * `currency` narrows to one account; without it, every account's points come interleaved by
- * time, each carrying its currency.
+ * It is one series of running equity: the value after every closed trade and, every minute
+ * of market time while positions are open, the value marked to market. Where the run was
+ * restarted with positions open, those positions are not carried over, so the curve has no
+ * value there: that moment is listed in `gaps` and is not a point of the curve.
+ *
+ * A run has one account per quote currency and accounts are never summed. `currency` chooses
+ * the account; it may be left out only when the run has a single account, or none yet (an
+ * empty curve). In a run started with `accounts: instrument` each instrument is an account:
+ * `instrument` selects it, and the answer is that account's own curve, its `equity` with its
+ * `gaps`, with the `instrument` beside the `currency`. `currency` may then be given instead
+ * only while it names a single account, and `measure` does not apply (`400`).
+ *
+ * `sinceMs` reads from that market time on, inclusive, which is how a client that already
+ * holds a curve reads only what is new. A curve too long to be read in one request answers
+ * `400`: narrow it with `sinceMs`, or page it. As for any equity curve, the server may force
+ * a smaller representation above its size thresholds: `meta.outMode` is the source of truth
+ * for what came back.
+ *
+ * Paging is opt-in. With `limit` or `cursor` the answer is one page of the raw curve, oldest
+ * first, with `_links.next` while there is more: the way to read a long curve at full
+ * resolution, since a long one is otherwise resampled. A page has the same shape (`outMode`
+ * and `differential` apply to it, and each page is decoded on its own), holds at most `limit`
+ * entries (a gap counts as one), and `resample` cannot be combined with it. The cursor is
+ * opaque: follow `_links.next.href` as given.
+ *
+ * With `instrument` the answer is that instrument's cumulative realised PnL, from 0, in the
+ * same shape, with the same options and paging: a point at each of its closed trades. The
+ * instrument belongs to the account of its quote currency, so `currency` need not be given.
+ * `measure` says what the values are: `equity` for an account's curve, `realisedPnl` for an
+ * instrument's (the shape calls them `equity` either way). The last values of the curves of
+ * the instruments of an account add up to the account's `realisedPnl`. In between they
+ * follow the realised part of the account's own curve only up to the order the trades were
+ * processed in: that curve is recorded in that order and this one is served by event time,
+ * and two instruments that close almost together can be stamped slightly out of it, so at
+ * those points the two differ by one trade. The gaps of an account are not attributed to an
+ * instrument, so `gaps` is empty.
+ *
+ * An instrument's curve can include what it holds and has not sold: with `measure=totalPnl`
+ * each point is the instrument's realised PnL up to then plus the unrealised value of its open
+ * position, at each closed trade (where nothing is held, so it is the realised PnL) and at
+ * each mark while a position is open. The answer says `measure: totalPnl`. `measure` is only
+ * for an instrument's curve: an account's is `equity` and already includes its marks.
  *
  * Readable by the run's owner, and by anyone if the run is `public` and has reached the `live`
  * stage.
@@ -1899,7 +1966,7 @@ export const mintLiveConnectionToken = <ThrowOnError extends boolean = false>(
 ) => {
   return (options?.client ?? _heyApiClient).post<
     MintLiveConnectionTokenResponse,
-    unknown,
+    MintLiveConnectionTokenError,
     ThrowOnError
   >({
     security: [

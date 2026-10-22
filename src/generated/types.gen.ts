@@ -19,6 +19,15 @@ export type ResponseError = {
    *
    */
   reason?: string;
+  /**
+   * Whether sending the same request again can succeed. `true` for `408`, `425`, `429` and
+   * every `5xx`; `false` for every other `4xx`, which fails the same way until the request
+   * changes: a field of the wrong type, a strategy that does not compile, a missing
+   * parameter. A plan limit, a `429` without `Retry-After`, is `false`. When the answer
+   * carries a `Retry-After`, wait that long before sending the request again.
+   *
+   */
+  retryable?: boolean;
   next?: ErrorNextCall;
 };
 
@@ -598,6 +607,14 @@ export type JobState = {
    * Timestamp for when the preparation finished
    */
   endTime?: string | null;
+  /**
+   * Present in the `state` of an execute job and not in the `state` of a prepare. Whether sending
+   * the same request again can succeed once the job has failed: `true` for a temporary fault
+   * reading the market data, `false` for any other failure, such as a strategy that throws. A job
+   * that has not failed carries `false`.
+   *
+   */
+  retryable?: boolean;
 };
 
 /**
@@ -1289,7 +1306,7 @@ export type EquityCurveMeta = {
 };
 
 /**
- * An equity curve, shaped per `meta.outMode`: `points` when `ARRAY`, `timestamps` + `equities` (parallel arrays) when `SHORT`. Used identically wherever a curve is returned — a plain backtest's inline `equityCurve` and a sweep row's `equityCurve` are the same type. `url` is present *instead of* any points when the curve is served by pointer rather than inline (a sweep row's top-N winners only): `GET` it separately to fetch this exact same shape with the points populated.
+ * An equity curve, shaped per `meta.outMode`: `points` when `ARRAY`, `timestamps` + `equities` (parallel arrays) when `SHORT`. Used identically wherever a curve is returned — a plain backtest's inline `equityCurve`, a sweep row's `equityCurve` and a live paper account's curve (`GET /live/{runId}/paper/equity`) are the same type. `url` is present *instead of* any points when the curve is served by pointer rather than inline (a sweep row's top-N winners only): `GET` it separately to fetch this exact same shape with the points populated.
  */
 export type EquityCurveResult = {
   meta: EquityCurveMeta;
@@ -1514,11 +1531,19 @@ export type Dataset = {
    */
   name: string;
   /**
-   * `ticker` for an upload, a `dex` import with no `cadence` requested (native per-trade
-   * data) or a `cex` import with `dataType: ticker`. `klines` for a `dex` import that
-   * requested a candle `cadence` — pre-aggregated bars rather than raw ticks — or a `cex`
-   * import with `dataType: klines`. Purely informational; both shapes are read the same
-   * way.
+   * What the rows of the current version are, decided when the version became `ready`. An
+   * import that knows what it fetched says so: a `cex` import is its `dataType`, a `dex`
+   * import of candles is `klines`. Everything else (an upload, a `dex` import of on-chain
+   * swaps) is read from the data: `ticker` when any row carries an order book (`bid`,
+   * `bidSize`, `ask`, `askSize`), or when there is only a price, or only some of
+   * `open`/`high`/`low`/`close`; `klines` when there is no book and `open`, `high`, `low`
+   * and `close` are on every row (candles). A file with no book whose `high` and `low`
+   * hardly ever change, or whose opens do not follow the closes before them (the
+   * exchange's 24-hour figures), stays `ticker`. A `kline` backtest needs `klines`; a
+   * `ticker` one takes either. Before the first version is
+   * `ready` it is only the label of the way the dataset was created (`ticker` for an
+   * upload, `klines` for an import that asked for candles). Datasets stored before this
+   * rule keep the `type` they had.
    *
    */
   type: "ticker" | "klines";
@@ -1683,7 +1708,10 @@ export type DatasetCreated = {
    */
   name: string;
   /**
-   * Always `ticker` in v1.
+   * The label of a dataset that has no data yet, always `ticker` for an upload. The
+   * dataset's `type` is read from the data once the upload has been ingested (see
+   * `Dataset.type`): a file of candles is `klines` then.
+   *
    */
   type: "ticker";
   instrument: Instrument;
@@ -1995,12 +2023,30 @@ export type DatasetImportState = {
  * lower case: `{ "backtests": ["read", "write", "execute"], "exchanges": ["read"] }`. A scope
  * is a resource and an action: a resource is listed only with at least one action, and a key
  * with no scope is `{}`. `GET /account` and `POST /auth/token` return the same map for the
- * same key. The API reports the scopes of a key; it does not yet refuse an operation because
- * a scope is missing.
+ * same key. An operation that needs a scope the key does not carry is answered `403` with the
+ * code `insufficient_scope`, and says which scope it needed.
  *
  */
 export type KeyScopes = {
   [key: string]: Array<string>;
+};
+
+/**
+ * Error envelope of a `403` returned when the API key behind the token does not carry the scope the operation needs.
+ */
+export type InsufficientScopeError = {
+  /**
+   * Machine-readable error reason.
+   */
+  code: "insufficient_scope";
+  /**
+   * Human-readable description of the failure.
+   */
+  message: string;
+  /**
+   * The scope the operation needs, as `resource:action`, in lower case.
+   */
+  required: string;
 };
 
 export type AuthTokenResponse = {
@@ -2150,16 +2196,17 @@ export type StartLiveRequest = {
 
 /**
  * Paper trading for this run: the same economics as a backtest's `baseConfig` (same fields,
- * defaults and limits), plus `output`. An empty object takes every default. Each quote
- * currency the run trades gets its own simulated account, opened with `initialFunding` in
- * that currency; accounts are never added together. As returned on a run, the block is
+ * defaults and limits), plus `output` and `accounts`. An empty object takes every default.
+ * By default each quote currency the run trades gets its own simulated account, opened with
+ * `initialFunding` in that currency; with `accounts: instrument` each instrument gets one
+ * instead. Accounts are never added together. As returned on a run, the block is
  * normalised: `feeRate` is resolved into `buyFeeRate`/`sellFeeRate` and defaults are filled
- * in.
+ * in; `accounts` is returned when the request gave it.
  *
  */
 export type LivePaperConfig = {
   /**
-   * Starting capital of each account, in that account's own quote currency.
+   * Starting capital of each account, in that account's own quote currency. With `accounts: instrument` it is the capital of EACH instrument's account: it is never the run's total capital and accounts are never added together.
    */
   initialFunding?: number;
   /**
@@ -2179,13 +2226,17 @@ export type LivePaperConfig = {
    */
   feeLeg?: "RECEIVED" | "QUOTE" | "BASE";
   /**
-   * Share of the account's free balance each entry locks, in percent. Omitted, the strategy's own setting applies, and without one 10%.
+   * Share of the account's free balance each entry locks, in percent. Omitted, the strategy's own setting applies, and without one 10% (the whole free balance, as a backtest, with `accounts: instrument`, where nothing is shared).
    */
   percentAmountToLock?: number;
   /**
    * `separate` keeps paper output out of the run's signals (read it with `GET /live/{runId}/paper`); `mix` also interleaves it into the run's signals as `type: paper`, right after the signal that caused it.
    */
   output?: "separate" | "mix";
+  /**
+   * How the run's accounts are split, fixed when it starts. `currency` (the default) is one shared account per quote currency: every instrument of a currency draws on the same balance, as on a venue with one wallet per asset. `instrument` is one isolated account per instrument, each a simulation of that instrument alone with its own `initialFunding`, which is what makes it comparable with a backtest of the instrument but less realistic, since a venue has one wallet per asset and not one per pair. It needs the instruments of the run named: a wildcard is refused, on every plan.
+   */
+  accounts?: "currency" | "instrument";
 };
 
 export type UpdateLiveRequest = {
@@ -2505,13 +2556,17 @@ export type LivePaper = {
 };
 
 /**
- * One simulated account — one per quote currency the run trades.
+ * One simulated account: one per quote currency the run trades, or one per instrument when the run was started with `accounts: instrument`.
  */
 export type LivePaperAccount = {
   /**
    * The account's quote currency; every amount below is in it.
    */
   currency: string;
+  /**
+   * With `accounts: instrument`, the instrument the account is: `currency` is then its quote and several accounts can share it. Absent for the shared account of a currency. Such an account has no `instruments`, since it already is one instrument: its `unrealisedPnl` and `totalPnl` are that instrument's own. Its `initialFunding` is its own: never add it to another account's.
+   */
+  instrument?: string;
   initialFunding: number;
   /**
    * Latest recorded equity — see `equityKind`.
@@ -2530,6 +2585,14 @@ export type LivePaperAccount = {
    */
   realisedPnl: number;
   /**
+   * What its open positions are worth over their cost as of the last mark, in the account's currency: the sum of `unrealisedPnl` over `openPositions`. `0` when it holds nothing. Absent while any of its positions has no current mark (see `openPositions`).
+   */
+  unrealisedPnl?: number;
+  /**
+   * `realisedPnl` plus `unrealisedPnl`. Absent when `unrealisedPnl` is.
+   */
+  totalPnl?: number;
+  /**
    * Closed trades.
    */
   trades: number;
@@ -2538,6 +2601,74 @@ export type LivePaperAccount = {
    */
   gaps: number;
   openPositions: Array<LivePaperPosition>;
+  kpi?: LivePaperKpi;
+  /**
+   * Only for the shared account of a currency. What the account realised per instrument: one entry for every instrument that has closed a trade or holds a position now, in instrument order. Exact for what was realised, and not how the instrument would have done on its own, since its entries depended on what the others had locked from the same account. The instruments' `realisedPnl` add up to the account's.
+   */
+  instruments?: Array<LivePaperInstrument>;
+};
+
+/**
+ * One instrument's part of a shared paper account.
+ */
+export type LivePaperInstrument = {
+  instrument: string;
+  /**
+   * Its closed trades.
+   */
+  trades: number;
+  /**
+   * Closed trades with a PnL above zero.
+   */
+  wins: number;
+  /**
+   * The other closed trades; a trade with a PnL of exactly zero is a loss.
+   */
+  losses: number;
+  /**
+   * Sum of the PnL of its closed trades, in the account's currency.
+   */
+  realisedPnl: number;
+  /**
+   * `realisedPnl` as a percent of the account's `initialFunding` (0-100 scale), so the contributions of the instruments add up to the account's realised return.
+   */
+  contributionPct?: number;
+  /**
+   * What its open position is worth over its cost as of the last mark; `0` when it holds nothing. Absent while its position has no current mark (see `openPosition`).
+   */
+  unrealisedPnl?: number;
+  /**
+   * `realisedPnl` plus `unrealisedPnl`. Absent when `unrealisedPnl` is.
+   */
+  totalPnl?: number;
+  /**
+   * What it holds now. Absent when it holds nothing.
+   */
+  openPosition?: {
+    /**
+     * Amount held, in the base asset.
+     */
+    base: number;
+    /**
+     * What it cost, in the account's currency.
+     */
+    cost: number;
+    /**
+     * The price it was valued at in the last mark. Present, with `markedAtMs` and `unrealisedPnl`, only when that mark is of the position as it stands now.
+     */
+    markPrice?: number;
+    /**
+     * Market time (epoch ms) of that mark.
+     */
+    markedAtMs?: number;
+    /**
+     * `base` times `markPrice`, minus `cost`, in the account's currency.
+     */
+    unrealisedPnl?: number;
+  };
+  /**
+   * The KPIs of this instrument's closed trades alone, with the account's `initialFunding` as the capital (so `pnlTotalPercent` equals `contributionPct`). Absent until its first closed trade.
+   */
   kpi?: LivePaperKpi;
 };
 
@@ -2551,6 +2682,18 @@ export type LivePaperPosition = {
    * What it cost, in the account's currency.
    */
   cost: number;
+  /**
+   * The price the position was valued at in the last mark. Present, with `markedAtMs` and `unrealisedPnl`, only when that mark is of the position as it stands now.
+   */
+  markPrice?: number;
+  /**
+   * Market time (epoch ms) of that mark.
+   */
+  markedAtMs?: number;
+  /**
+   * `base` times `markPrice`, minus `cost`, in the account's currency.
+   */
+  unrealisedPnl?: number;
 };
 
 /**
@@ -2582,26 +2725,37 @@ export type LivePaperKpi = {
   maxDrawdownPercent?: number;
 };
 
-export type LivePaperEquityPage = {
-  points: Array<LivePaperEquityPoint>;
+/**
+ * One paper account's equity curve: the API's one equity curve (`EquityCurveResult`, `{points|timestamps+equities, meta}`) with the account's `currency` and the `gaps` alongside.
+ */
+export type LivePaperEquityCurve = EquityCurveResult & {
+  /**
+   * The account's quote currency. Absent only when the run has no account yet, which gives an empty curve.
+   */
+  currency?: string;
+  /**
+   * Present when the curve is one instrument's (`measure` is `realisedPnl` or `totalPnl`) and, in a run started with `accounts: instrument`, when it is the curve of the account that instrument is (`measure` is `equity`).
+   */
+  instrument?: string;
+  /**
+   * What the values of the curve are: the account's `equity`, an instrument's cumulative `realisedPnl` from 0, or its `totalPnl` (the realised PnL plus the unrealised value of its open position). The shape names its values `equity` in every case.
+   */
+  measure: "equity" | "realisedPnl" | "totalPnl";
+  /**
+   * Market times (epoch ms, oldest first) at which open positions were lost because the run was restarted with them open. A gap is not a point of the curve and is not counted in `meta`.
+   */
+  gaps: Array<number>;
+  /**
+   * Present on a page of the raw curve while there is a next one.
+   */
   _links?: {
     next?: {
+      /**
+       * The next page; follow it as given, the cursor is opaque.
+       */
       href?: string;
     };
   };
-};
-
-export type LivePaperEquityPoint = {
-  currency: string;
-  kind: "equity" | "mark" | "gap";
-  /**
-   * Market time of the point.
-   */
-  eventTsMs: number;
-  /**
-   * Absent on a `gap`.
-   */
-  equity?: number;
 };
 
 /**
@@ -2785,6 +2939,19 @@ export type ListExchangesData = {
   url: "/exchanges";
 };
 
+export type ListExchangesErrors = {
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+};
+
+export type ListExchangesError = ListExchangesErrors[keyof ListExchangesErrors];
+
 export type ListExchangesResponses = {
   /**
    * A JSON array of Exchanges
@@ -2812,6 +2979,14 @@ export type ListInstrumentsErrors = {
    * The exchange is not one `GET /exchanges` lists
    */
   400: ResponseError;
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
   /**
    * The instrument catalog is not available
    */
@@ -2852,6 +3027,14 @@ export type ListSegmentInstrumentsErrors = {
    * The exchange is not one `GET /exchanges` lists, or the segment is not one the exchange has (`spot` or `futures` for a centralized exchange, a protocol for a decentralized one)
    */
   400: ResponseError;
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
   /**
    * The instrument catalog is not available
    */
@@ -2912,6 +3095,14 @@ export type DownloadTickersErrors = {
    *
    */
   400: ResponseError;
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
   /**
    * No segment for the requested instrument/hour. `reason: NOT_YET_AVAILABLE` — the hour
    * is not stored yet and no provisional answer was given for it (the answer carries
@@ -2991,6 +3182,14 @@ export type DownloadKlinesErrors = {
    */
   400: ResponseError;
   /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
    * No segment for the requested instrument/hour. `reason: NOT_YET_AVAILABLE` — the hour
    * is not stored yet and no provisional answer was given for it (the answer carries
    * `Retry-After`); `reason: NO_DATA` — the hour is stored and holds nothing for this
@@ -3042,6 +3241,20 @@ export type ListStrategiesData = {
   url: "/strategies";
 };
 
+export type ListStrategiesErrors = {
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+};
+
+export type ListStrategiesError =
+  ListStrategiesErrors[keyof ListStrategiesErrors];
+
 export type ListStrategiesResponses = {
   /**
    * Your registered strategies. An empty array if you have none — this is never a `404`.
@@ -3073,6 +3286,14 @@ export type CompileStrategyErrors = {
    *
    */
   400: ResponseError;
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
   /**
    * The source is larger than 32 KiB (32768 bytes). Every endpoint that reads a request body caps it, and the message names the cap; see the Strategy guide.
    */
@@ -3118,6 +3339,14 @@ export type ValidateStrategyData = {
 
 export type ValidateStrategyErrors = {
   /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
    * No such registered strategy for this user
    */
   404: ResponseError;
@@ -3162,6 +3391,14 @@ export type DeleteStrategyData = {
 
 export type DeleteStrategyErrors = {
   /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
    * No such registered strategy for this user
    */
   404: ResponseError;
@@ -3197,6 +3434,14 @@ export type GetStrategyData = {
 
 export type GetStrategyErrors = {
   /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
    * No such registered strategy for this user
    */
   404: ResponseError;
@@ -3227,6 +3472,14 @@ export type GetStrategyCodeData = {
 };
 
 export type GetStrategyCodeErrors = {
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
   /**
    * No such registered strategy for this user, or nothing to read for this id
    */
@@ -3286,6 +3539,14 @@ export type PrepareBacktestErrors = {
    */
   400: ResponseError;
   /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
    * Exchange or data source type not found. For `exchangeId: user`, also returned when
    * `datasetId` (or a pinned `datasetVersionId`) doesn't exist or isn't yours.
    *
@@ -3341,6 +3602,14 @@ export type GetPrepareStatusErrors = {
    */
   400: ResponseError;
   /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
    * Prepare job not found or expired
    */
   404: ResponseError;
@@ -3383,6 +3652,14 @@ export type ExecuteSweepErrors = {
    */
   400: ResponseError;
   /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
    * Prepared request not found or expired.
    */
   404: ResponseError;
@@ -3420,6 +3697,14 @@ export type CancelSweepData = {
 };
 
 export type CancelSweepErrors = {
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
   /**
    * Sweep not found.
    */
@@ -3468,6 +3753,14 @@ export type GetSweepResultData = {
 
 export type GetSweepResultErrors = {
   /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
    * Sweep not found or expired.
    */
   404: ResponseError;
@@ -3507,6 +3800,14 @@ export type GetSweepSensitivityData = {
 };
 
 export type GetSweepSensitivityErrors = {
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
   /**
    * Sweep not found or expired.
    */
@@ -3559,6 +3860,14 @@ export type GetSweepRunEquityCurveData = {
 };
 
 export type GetSweepRunEquityCurveErrors = {
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
   /**
    * Sweep or `runIx` not found, or that trial's curve was never selected — indistinguishable from a caller's perspective.
    */
@@ -3652,6 +3961,14 @@ export type ExecuteBacktestErrors = {
    */
   400: ResponseError;
   /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
    * Prepare job not found or expired
    */
   404: ResponseError;
@@ -3689,6 +4006,14 @@ export type CancelBacktestData = {
 };
 
 export type CancelBacktestErrors = {
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
   /**
    * Execution not found
    */
@@ -3737,6 +4062,14 @@ export type GetBacktestResultErrors = {
    */
   400: ResponseError;
   /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
    * Execution job not found
    */
   404: ResponseError;
@@ -3784,6 +4117,19 @@ export type ListDatasetsData = {
   url: "/datasets";
 };
 
+export type ListDatasetsErrors = {
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+};
+
+export type ListDatasetsError = ListDatasetsErrors[keyof ListDatasetsErrors];
+
 export type ListDatasetsResponses = {
   /**
    * Your datasets
@@ -3817,6 +4163,14 @@ export type CreateDatasetErrors = {
    * Invalid request, or `instrument` is not a plain spot pair
    */
   400: ResponseError;
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
   /**
    * You already have a dataset with this `name`
    */
@@ -3853,6 +4207,14 @@ export type DeleteDatasetData = {
 
 export type DeleteDatasetErrors = {
   /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
    * No such dataset for this user, or already deleted
    */
   404: ResponseError;
@@ -3887,6 +4249,14 @@ export type GetDatasetData = {
 
 export type GetDatasetErrors = {
   /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
    * No such dataset for this user
    */
   404: ResponseError;
@@ -3916,6 +4286,14 @@ export type OpenDatasetUploadData = {
 };
 
 export type OpenDatasetUploadErrors = {
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
   /**
    * No such dataset for this user
    */
@@ -3952,6 +4330,14 @@ export type FinalizeDatasetUploadData = {
 };
 
 export type FinalizeDatasetUploadErrors = {
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
   /**
    * No such dataset for this user; `uploadId` was not issued for this dataset (never
    * minted, or minted for a different one); or nothing was PUT to `upload.url` yet — a
@@ -4010,6 +4396,14 @@ export type GetDatasetUploadData = {
 
 export type GetDatasetUploadErrors = {
   /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
    * No such dataset for this user, or genuinely nothing is known about this `uploadId` — no
    * version, no in-flight job, and nothing was ever PUT to its upload URL.
    *
@@ -4063,6 +4457,14 @@ export type ImportDatasetErrors = {
    */
   400: ResponseError;
   /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
    * You already have a dataset with this `name`
    */
   409: ResponseError;
@@ -4105,6 +4507,14 @@ export type GetDatasetImportData = {
 
 export type GetDatasetImportErrors = {
   /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
    * No such dataset for this user, or genuinely nothing is known about this `importId`.
    *
    */
@@ -4138,6 +4548,14 @@ export type StopLiveData = {
 
 export type StopLiveErrors = {
   /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
    * You have never started a live run for this strategy.
    */
   404: ResponseError;
@@ -4167,6 +4585,14 @@ export type GetLiveData = {
 };
 
 export type GetLiveErrors = {
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
   /**
    * You have never started a live run for this strategy.
    */
@@ -4201,6 +4627,14 @@ export type StartLiveErrors = {
    * Malformed `sources` (not exactly one entry, missing field, unsupported `type`), a `venueType`, `exchange` and `segment` that `GET /exchanges` does not list together, or a segment with no live data (the message names what it lists), a `type` the strategy cannot consume (a ticker strategy with a `kline` source, or the reverse; the message names both), an invalid `visibility`, an invalid `paper` block (an unknown field, a wrong type or an out-of-range value), or no `paper` block for a strategy that listens to its own execution events. A `relay` or `stream` that is not `true` or `false`, or a `stream` where streams are not available yet. A `warmFrom` that is not an integer from 0 to 3600. An `instruments` that is empty or `null`.
    */
   400: ResponseError;
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
   /**
    * No such registered strategy for this user, or it has never been compiled.
    */
@@ -4251,6 +4685,14 @@ export type ListLiveErrors = {
    * An invalid `cursor` or `limit`.
    */
   400: ResponseError;
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
 };
 
 export type ListLiveError = ListLiveErrors[keyof ListLiveErrors];
@@ -4314,6 +4756,14 @@ export type GetLiveRunData = {
 
 export type GetLiveRunErrors = {
   /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
    * No such run, or you do not own it — the two look identical on purpose.
    */
   404: ResponseError;
@@ -4348,6 +4798,14 @@ export type UpdateLiveErrors = {
    */
   400: ResponseError;
   /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
    * No such run, or you do not own it — the two look identical on purpose.
    */
   404: ResponseError;
@@ -4378,6 +4836,14 @@ export type UpdateLiveParamsErrors = {
    * `params` missing, not an object, empty, or contains a key your strategy does not declare.
    */
   400: ResponseError;
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
   /**
    * No such run, or you do not own it.
    */
@@ -4415,6 +4881,14 @@ export type SendLiveCommandErrors = {
    * `command` missing, not a string, blank; `properties` given but not an object; or the body carries any key other than `command` and `properties`.
    */
   400: ResponseError;
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
   /**
    * No such run, or you do not own it.
    */
@@ -4461,6 +4935,14 @@ export type RevokeLiveStreamData = {
 
 export type RevokeLiveStreamErrors = {
   /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
    * No such run, or you do not own it.
    */
   404: ResponseError;
@@ -4493,6 +4975,14 @@ export type RotateLiveStreamData = {
 };
 
 export type RotateLiveStreamErrors = {
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
   /**
    * No such run, or you do not own it.
    */
@@ -4566,6 +5056,14 @@ export type GetLiveRunSignalsErrors = {
    */
   400: ResponseError;
   /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
    * No such run, or not one you may read.
    */
   404: ResponseError;
@@ -4599,6 +5097,14 @@ export type GetLiveRunPaperData = {
 
 export type GetLiveRunPaperErrors = {
   /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
    * No such run, not one you may read, or a run without paper trading.
    */
   404: ResponseError;
@@ -4624,27 +5130,58 @@ export type GetLiveRunPaperEquityData = {
   };
   query?: {
     /**
-     * One account's quote currency, e.g. `USDT`.
+     * One account's quote currency, e.g. `USDT`. May be left out when the run has a single account, or none yet, or when `instrument` is given.
      */
     currency?: string;
     /**
-     * Start from this market time (epoch ms). Ignored when `cursor` is given.
+     * One instrument of the account, as `BASE/QUOTE`: answers its cumulative realised PnL instead of the account's equity. Its account is its quote currency; a `currency` that is another one is a `400`. In a run started with `accounts: instrument` it selects the account of that instrument instead and the answer is the account's own equity curve.
+     */
+    instrument?: string;
+    /**
+     * With `instrument`: `realisedPnl` (the default) or `totalPnl`, which adds the unrealised value of its open position at each mark. Without `instrument` it is a `400`, and so it is in a run started with `accounts: instrument`, whose accounts have one curve.
+     */
+    measure?: "realisedPnl" | "totalPnl";
+    /**
+     * Start from this market time (epoch ms), inclusive. Ignored when `cursor` is given.
      */
     sinceMs?: number;
     /**
-     * Continue from a previous page's `_links.next`.
+     * Requested JSON shape. May be overridden by the server's size guard; `meta.outMode` in the response is the source of truth.
+     */
+    outMode?: EquityCurveOutMode;
+    /**
+     * Downsample to at most this many points (extrema-preserving — the global max/min and the exact first/last point are always kept). Omit for no downsampling.
+     */
+    resample?: number;
+    /**
+     * Delta-encode both fields from the second point onward (from the second point of each page, when paging).
+     */
+    differential?: boolean;
+    /**
+     * Page size, in entries (a gap is one). Giving it turns the answer into one page of the raw curve; it cannot be combined with `resample`.
+     */
+    limit?: number;
+    /**
+     * Continue from a previous page's `_links.next`. Giving it turns the answer into one page of the raw curve; it cannot be combined with `resample`.
      */
     cursor?: string;
-    limit?: number;
   };
   url: "/live/{runId}/paper/equity";
 };
 
 export type GetLiveRunPaperEquityErrors = {
   /**
-   * `sinceMs`, `limit` or `cursor` is malformed.
+   * `sinceMs`, `limit` or `cursor` is malformed, `resample` is combined with `limit` or `cursor`, the run has several accounts and `currency` is missing, `instrument` is not `BASE/QUOTE` or `currency` is another account than the instrument's, or the curve is too long to be read in one request (narrow it with `sinceMs`, or page it).
    */
   400: ResponseError;
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
   /**
    * No such run, not one you may read, or a run without paper trading.
    */
@@ -4656,9 +5193,9 @@ export type GetLiveRunPaperEquityError =
 
 export type GetLiveRunPaperEquityResponses = {
   /**
-   * One page of the curve
+   * The account's curve, shaped per the resolved options
    */
-  200: LivePaperEquityPage;
+  200: LivePaperEquityCurve;
 };
 
 export type GetLiveRunPaperEquityResponse =
@@ -4670,6 +5207,20 @@ export type MintLiveConnectionTokenData = {
   query?: never;
   url: "/live/token";
 };
+
+export type MintLiveConnectionTokenErrors = {
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+};
+
+export type MintLiveConnectionTokenError =
+  MintLiveConnectionTokenErrors[keyof MintLiveConnectionTokenErrors];
 
 export type MintLiveConnectionTokenResponses = {
   /**

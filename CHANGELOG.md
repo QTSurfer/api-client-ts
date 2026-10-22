@@ -1,5 +1,11 @@
 # @qtsurfer/api-client
 
+## 0.26.0
+
+### Minor Changes
+
+- Regenerate for OpenAPI 0.128.38–0.128.46. Protected operations now return typed `403 InsufficientScopeError` responses; `ResponseError` and execution `JobState` expose retry guidance; datasets can be prepared as candles; and paper live-trading accounts expose per-instrument results and a typed `LivePaperEquityCurve` response with shaping, instrument, measure, and paging options.
+
 ## 0.25.0
 
 ### Minor Changes

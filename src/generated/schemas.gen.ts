@@ -23,6 +23,16 @@ the values it uses. A client treats a value it does not know like an absent \`re
       type: "string",
       example: "OUTSIDE_WINDOW",
     },
+    retryable: {
+      description: `Whether sending the same request again can succeed. \`true\` for \`408\`, \`425\`, \`429\` and
+every \`5xx\`; \`false\` for every other \`4xx\`, which fails the same way until the request
+changes: a field of the wrong type, a strategy that does not compile, a missing
+parameter. A plan limit, a \`429\` without \`Retry-After\`, is \`false\`. When the answer
+carries a \`Retry-After\`, wait that long before sending the request again.
+`,
+      type: "boolean",
+      example: false,
+    },
     next: {
       $ref: "#/components/schemas/ErrorNextCall",
     },
@@ -953,6 +963,15 @@ which has no ratio), not by polling.
       format: "date-time",
       description: "Timestamp for when the preparation finished",
       example: "2025-01-04T14:00:20Z",
+    },
+    retryable: {
+      type: "boolean",
+      description: `Present in the \`state\` of an execute job and not in the \`state\` of a prepare. Whether sending
+the same request again can succeed once the job has failed: \`true\` for a temporary fault
+reading the market data, \`false\` for any other failure, such as a strategy that throws. A job
+that has not failed carries \`false\`.
+`,
+      example: false,
     },
   },
 } as const;
@@ -2220,7 +2239,7 @@ export const EquityCurveMetaSchema = {
 export const EquityCurveResultSchema = {
   type: "object",
   description:
-    "An equity curve, shaped per `meta.outMode`: `points` when `ARRAY`, `timestamps` + `equities` (parallel arrays) when `SHORT`. Used identically wherever a curve is returned — a plain backtest's inline `equityCurve` and a sweep row's `equityCurve` are the same type. `url` is present *instead of* any points when the curve is served by pointer rather than inline (a sweep row's top-N winners only): `GET` it separately to fetch this exact same shape with the points populated.",
+    "An equity curve, shaped per `meta.outMode`: `points` when `ARRAY`, `timestamps` + `equities` (parallel arrays) when `SHORT`. Used identically wherever a curve is returned — a plain backtest's inline `equityCurve`, a sweep row's `equityCurve` and a live paper account's curve (`GET /live/{runId}/paper/equity`) are the same type. `url` is present *instead of* any points when the curve is served by pointer rather than inline (a sweep row's top-N winners only): `GET` it separately to fetch this exact same shape with the points populated.",
   required: ["meta"],
   properties: {
     meta: {
@@ -2544,13 +2563,21 @@ dataset covers.
     type: {
       type: "string",
       enum: ["ticker", "klines"],
-      description: `\`ticker\` for an upload, a \`dex\` import with no \`cadence\` requested (native per-trade
-data) or a \`cex\` import with \`dataType: ticker\`. \`klines\` for a \`dex\` import that
-requested a candle \`cadence\` — pre-aggregated bars rather than raw ticks — or a \`cex\`
-import with \`dataType: klines\`. Purely informational; both shapes are read the same
-way.
+      description: `What the rows of the current version are, decided when the version became \`ready\`. An
+import that knows what it fetched says so: a \`cex\` import is its \`dataType\`, a \`dex\`
+import of candles is \`klines\`. Everything else (an upload, a \`dex\` import of on-chain
+swaps) is read from the data: \`ticker\` when any row carries an order book (\`bid\`,
+\`bidSize\`, \`ask\`, \`askSize\`), or when there is only a price, or only some of
+\`open\`/\`high\`/\`low\`/\`close\`; \`klines\` when there is no book and \`open\`, \`high\`, \`low\`
+and \`close\` are on every row (candles). A file with no book whose \`high\` and \`low\`
+hardly ever change, or whose opens do not follow the closes before them (the
+exchange's 24-hour figures), stays \`ticker\`. A \`kline\` backtest needs \`klines\`; a
+\`ticker\` one takes either. Before the first version is
+\`ready\` it is only the label of the way the dataset was created (\`ticker\` for an
+upload, \`klines\` for an import that asked for candles). Datasets stored before this
+rule keep the \`type\` they had.
 `,
-      example: "ticker",
+      example: "klines",
     },
     instrument: {
       $ref: "#/components/schemas/Instrument",
@@ -2777,7 +2804,10 @@ after the relevant lifecycle stages, not in this creation response.
         type: {
           type: "string",
           enum: ["ticker"],
-          description: "Always `ticker` in v1.",
+          description: `The label of a dataset that has no data yet, always \`ticker\` for an upload. The
+dataset's \`type\` is read from the data once the upload has been ingested (see
+\`Dataset.type\`): a file of candles is \`klines\` then.
+`,
           example: "ticker",
         },
         instrument: {
@@ -3200,8 +3230,8 @@ export const KeyScopesSchema = {
 lower case: \`{ "backtests": ["read", "write", "execute"], "exchanges": ["read"] }\`. A scope
 is a resource and an action: a resource is listed only with at least one action, and a key
 with no scope is \`{}\`. \`GET /account\` and \`POST /auth/token\` return the same map for the
-same key. The API reports the scopes of a key; it does not yet refuse an operation because
-a scope is missing.
+same key. An operation that needs a scope the key does not carry is answered \`403\` with the
+code \`insufficient_scope\`, and says which scope it needed.
 `,
   additionalProperties: {
     type: "array",
@@ -3214,6 +3244,30 @@ a scope is missing.
   example: {
     backtests: ["read", "write", "execute"],
     exchanges: ["read"],
+  },
+} as const;
+
+export const InsufficientScopeErrorSchema = {
+  type: "object",
+  required: ["code", "message", "required"],
+  description:
+    "Error envelope of a `403` returned when the API key behind the token does not carry the scope the operation needs.",
+  properties: {
+    code: {
+      type: "string",
+      enum: ["insufficient_scope"],
+      description: "Machine-readable error reason.",
+    },
+    message: {
+      type: "string",
+      description: "Human-readable description of the failure.",
+    },
+    required: {
+      type: "string",
+      description:
+        "The scope the operation needs, as `resource:action`, in lower case.",
+      example: "datasets:write",
+    },
   },
 } as const;
 
@@ -3441,11 +3495,12 @@ export const LivePaperConfigSchema = {
   type: "object",
   additionalProperties: false,
   description: `Paper trading for this run: the same economics as a backtest's \`baseConfig\` (same fields,
-defaults and limits), plus \`output\`. An empty object takes every default. Each quote
-currency the run trades gets its own simulated account, opened with \`initialFunding\` in
-that currency; accounts are never added together. As returned on a run, the block is
+defaults and limits), plus \`output\` and \`accounts\`. An empty object takes every default.
+By default each quote currency the run trades gets its own simulated account, opened with
+\`initialFunding\` in that currency; with \`accounts: instrument\` each instrument gets one
+instead. Accounts are never added together. As returned on a run, the block is
 normalised: \`feeRate\` is resolved into \`buyFeeRate\`/\`sellFeeRate\` and defaults are filled
-in.
+in; \`accounts\` is returned when the request gave it.
 `,
   properties: {
     initialFunding: {
@@ -3455,7 +3510,7 @@ in.
       maximum: 1000000000,
       default: 100,
       description:
-        "Starting capital of each account, in that account's own quote currency.",
+        "Starting capital of each account, in that account's own quote currency. With `accounts: instrument` it is the capital of EACH instrument's account: it is never the run's total capital and accounts are never added together.",
     },
     feeRate: {
       type: "number",
@@ -3490,13 +3545,20 @@ in.
       exclusiveMinimum: 0,
       maximum: 100,
       description:
-        "Share of the account's free balance each entry locks, in percent. Omitted, the strategy's own setting applies, and without one 10%.",
+        "Share of the account's free balance each entry locks, in percent. Omitted, the strategy's own setting applies, and without one 10% (the whole free balance, as a backtest, with `accounts: instrument`, where nothing is shared).",
     },
     output: {
       type: "string",
       enum: ["separate", "mix"],
       default: "separate",
       description: `\`separate\` keeps paper output out of the run's signals (read it with \`GET /live/{runId}/paper\`); \`mix\` also interleaves it into the run's signals as \`type: paper\`, right after the signal that caused it.`,
+    },
+    accounts: {
+      type: "string",
+      enum: ["currency", "instrument"],
+      default: "currency",
+      description:
+        "How the run's accounts are split, fixed when it starts. `currency` (the default) is one shared account per quote currency: every instrument of a currency draws on the same balance, as on a venue with one wallet per asset. `instrument` is one isolated account per instrument, each a simulation of that instrument alone with its own `initialFunding`, which is what makes it comparable with a backtest of the instrument but less realistic, since a venue has one wallet per asset and not one per pair. It needs the instruments of the run named: a wildcard is refused, on every plan.",
     },
   },
 } as const;
@@ -4069,11 +4131,18 @@ export const LivePaperAccountSchema = {
     "gaps",
     "openPositions",
   ],
-  description: "One simulated account — one per quote currency the run trades.",
+  description:
+    "One simulated account: one per quote currency the run trades, or one per instrument when the run was started with `accounts: instrument`.",
   properties: {
     currency: {
       type: "string",
       description: "The account's quote currency; every amount below is in it.",
+    },
+    instrument: {
+      type: "string",
+      example: "BTC/USDT",
+      description:
+        "With `accounts: instrument`, the instrument the account is: `currency` is then its quote and several accounts can share it. Absent for the shared account of a currency. Such an account has no `instruments`, since it already is one instrument: its `unrealisedPnl` and `totalPnl` are that instrument's own. Its `initialFunding` is its own: never add it to another account's.",
     },
     initialFunding: {
       type: "number",
@@ -4100,6 +4169,17 @@ export const LivePaperAccountSchema = {
       format: "double",
       description: "Sum of the PnL of the closed trades.",
     },
+    unrealisedPnl: {
+      type: "number",
+      format: "double",
+      description:
+        "What its open positions are worth over their cost as of the last mark, in the account's currency: the sum of `unrealisedPnl` over `openPositions`. `0` when it holds nothing. Absent while any of its positions has no current mark (see `openPositions`).",
+    },
+    totalPnl: {
+      type: "number",
+      format: "double",
+      description: `\`realisedPnl\` plus \`unrealisedPnl\`. Absent when \`unrealisedPnl\` is.`,
+    },
     trades: {
       type: "integer",
       format: "int64",
@@ -4118,6 +4198,106 @@ export const LivePaperAccountSchema = {
     },
     kpi: {
       $ref: "#/components/schemas/LivePaperKpi",
+    },
+    instruments: {
+      type: "array",
+      description:
+        "Only for the shared account of a currency. What the account realised per instrument: one entry for every instrument that has closed a trade or holds a position now, in instrument order. Exact for what was realised, and not how the instrument would have done on its own, since its entries depended on what the others had locked from the same account. The instruments' `realisedPnl` add up to the account's.",
+      items: {
+        $ref: "#/components/schemas/LivePaperInstrument",
+      },
+    },
+  },
+} as const;
+
+export const LivePaperInstrumentSchema = {
+  type: "object",
+  required: ["instrument", "trades", "wins", "losses", "realisedPnl"],
+  description: "One instrument's part of a shared paper account.",
+  properties: {
+    instrument: {
+      type: "string",
+      example: "BTC/USDT",
+    },
+    trades: {
+      type: "integer",
+      format: "int64",
+      description: "Its closed trades.",
+    },
+    wins: {
+      type: "integer",
+      format: "int64",
+      description: "Closed trades with a PnL above zero.",
+    },
+    losses: {
+      type: "integer",
+      format: "int64",
+      description:
+        "The other closed trades; a trade with a PnL of exactly zero is a loss.",
+    },
+    realisedPnl: {
+      type: "number",
+      format: "double",
+      description:
+        "Sum of the PnL of its closed trades, in the account's currency.",
+    },
+    contributionPct: {
+      type: "number",
+      format: "double",
+      description: `\`realisedPnl\` as a percent of the account's \`initialFunding\` (0-100 scale), so the contributions of the instruments add up to the account's realised return.`,
+    },
+    unrealisedPnl: {
+      type: "number",
+      format: "double",
+      description:
+        "What its open position is worth over its cost as of the last mark; `0` when it holds nothing. Absent while its position has no current mark (see `openPosition`).",
+    },
+    totalPnl: {
+      type: "number",
+      format: "double",
+      description: `\`realisedPnl\` plus \`unrealisedPnl\`. Absent when \`unrealisedPnl\` is.`,
+    },
+    openPosition: {
+      type: "object",
+      description: "What it holds now. Absent when it holds nothing.",
+      required: ["base", "cost"],
+      properties: {
+        base: {
+          type: "number",
+          format: "double",
+          description: "Amount held, in the base asset.",
+        },
+        cost: {
+          type: "number",
+          format: "double",
+          description: "What it cost, in the account's currency.",
+        },
+        markPrice: {
+          type: "number",
+          format: "double",
+          description:
+            "The price it was valued at in the last mark. Present, with `markedAtMs` and `unrealisedPnl`, only when that mark is of the position as it stands now.",
+        },
+        markedAtMs: {
+          type: "integer",
+          format: "int64",
+          description: "Market time (epoch ms) of that mark.",
+        },
+        unrealisedPnl: {
+          type: "number",
+          format: "double",
+          description: `\`base\` times \`markPrice\`, minus \`cost\`, in the account's currency.`,
+        },
+      },
+    },
+    kpi: {
+      allOf: [
+        {
+          $ref: "#/components/schemas/LivePaperKpi",
+        },
+      ],
+      description:
+        "The KPIs of this instrument's closed trades alone, with the account's `initialFunding` as the capital (so `pnlTotalPercent` equals `contributionPct`). Absent until its first closed trade.",
     },
   },
 } as const;
@@ -4139,6 +4319,22 @@ export const LivePaperPositionSchema = {
       type: "number",
       format: "double",
       description: "What it cost, in the account's currency.",
+    },
+    markPrice: {
+      type: "number",
+      format: "double",
+      description:
+        "The price the position was valued at in the last mark. Present, with `markedAtMs` and `unrealisedPnl`, only when that mark is of the position as it stands now.",
+    },
+    markedAtMs: {
+      type: "integer",
+      format: "int64",
+      description: "Market time (epoch ms) of that mark.",
+    },
+    unrealisedPnl: {
+      type: "number",
+      format: "double",
+      description: `\`base\` times \`markPrice\`, minus \`cost\`, in the account's currency.`,
     },
   },
 } as const;
@@ -4199,54 +4395,63 @@ export const LivePaperKpiSchema = {
   },
 } as const;
 
-export const LivePaperEquityPageSchema = {
-  type: "object",
-  required: ["points"],
-  properties: {
-    points: {
-      type: "array",
-      items: {
-        $ref: "#/components/schemas/LivePaperEquityPoint",
-      },
+export const LivePaperEquityCurveSchema = {
+  description:
+    "One paper account's equity curve: the API's one equity curve (`EquityCurveResult`, `{points|timestamps+equities, meta}`) with the account's `currency` and the `gaps` alongside.",
+  allOf: [
+    {
+      $ref: "#/components/schemas/EquityCurveResult",
     },
-    _links: {
+    {
       type: "object",
+      required: ["gaps", "measure"],
       properties: {
-        next: {
+        currency: {
+          type: "string",
+          description:
+            "The account's quote currency. Absent only when the run has no account yet, which gives an empty curve.",
+        },
+        instrument: {
+          type: "string",
+          example: "BTC/USDT",
+          description:
+            "Present when the curve is one instrument's (`measure` is `realisedPnl` or `totalPnl`) and, in a run started with `accounts: instrument`, when it is the curve of the account that instrument is (`measure` is `equity`).",
+        },
+        measure: {
+          type: "string",
+          enum: ["equity", "realisedPnl", "totalPnl"],
+          description:
+            "What the values of the curve are: the account's `equity`, an instrument's cumulative `realisedPnl` from 0, or its `totalPnl` (the realised PnL plus the unrealised value of its open position). The shape names its values `equity` in every case.",
+        },
+        gaps: {
+          type: "array",
+          description:
+            "Market times (epoch ms, oldest first) at which open positions were lost because the run was restarted with them open. A gap is not a point of the curve and is not counted in `meta`.",
+          items: {
+            type: "integer",
+            format: "int64",
+          },
+        },
+        _links: {
           type: "object",
+          description:
+            "Present on a page of the raw curve while there is a next one.",
           properties: {
-            href: {
-              type: "string",
+            next: {
+              type: "object",
+              properties: {
+                href: {
+                  type: "string",
+                  description:
+                    "The next page; follow it as given, the cursor is opaque.",
+                },
+              },
             },
           },
         },
       },
     },
-  },
-} as const;
-
-export const LivePaperEquityPointSchema = {
-  type: "object",
-  required: ["currency", "kind", "eventTsMs"],
-  properties: {
-    currency: {
-      type: "string",
-    },
-    kind: {
-      type: "string",
-      enum: ["equity", "mark", "gap"],
-    },
-    eventTsMs: {
-      type: "integer",
-      format: "int64",
-      description: "Market time of the point.",
-    },
-    equity: {
-      type: "number",
-      format: "double",
-      description: "Absent on a `gap`.",
-    },
-  },
+  ],
 } as const;
 
 export const LiveSignalSchema = {
