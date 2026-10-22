@@ -5,6 +5,7 @@
 ### Minor Changes
 
 - Regenerate for OpenAPI 0.128.38–0.128.46. Protected operations now return typed `403 InsufficientScopeError` responses; `ResponseError` and execution `JobState` expose retry guidance; datasets can be prepared as candles; and paper live-trading accounts expose per-instrument results and a typed `LivePaperEquityCurve` response with shaping, instrument, measure, and paging options.
+- Pin security-patched development dependencies `handlebars@4.7.10` and `tar@7.5.22`; runtime output is unchanged.
 
 ## 0.25.0
 
