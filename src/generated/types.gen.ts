@@ -568,17 +568,23 @@ export type PrepareRequest = {
    * what omitting it means, depends on the source:
    *
    * * Managed exchange, `ticker` or `funding` — one of `1s`, `5s`, `1m`, `3m`, `5m`, `15m`,
-   * `30m`, `1h`, `2h`, `4h`, `8h`, `12h`, `1d`, `1w`, `1q`; any other label returns `400`.
-   * Omitted = `1s`, the publisher's native cadence.
+   * `30m`, `1h`, `2h`, `4h`, `8h`, `12h`, `1d`, `1w`, `1q`; any other label returns `400`,
+   * and one your plan does not include returns `402`. Omitted = the finest cadence your plan
+   * includes.
    * * Managed exchange, `kline` — the same labels as above, `1s` to `1q`; a label that is
-   * not a whole number of seconds returns `400`. Omitted = `1s`. This is the width of the
+   * not a whole number of seconds returns `400`. Omitted = the finest cadence your plan
+   * includes. This is the width of the
    * bars a run reads: it is chosen here, once, and the same strategy can be run at
    * several cadences by preparing the range at each.
    * * Dataset (`exchangeId: user`) — omitted = the dataset version's own discovered
    * `cadence` (see `DatasetVersion.cadence`), served as-is. Any cadence equal to or
    * coarser than it and an exact multiple of it is accepted, including ones outside the
    * managed-exchange list (e.g. `15s`); an `rt` dataset can be resampled to any fixed
-   * cadence.
+   * cadence. Your plan does not limit it.
+   *
+   * What a managed exchange's data is prepared at depends on your plan: the "Cadences by plan" section of the Backtests guide
+   * lists the cadences each plan includes and its default. Omitted = the plan's default. A
+   * cadence your plan does not include is `402`.
    *
    */
   cadence?: string;
@@ -1149,6 +1155,19 @@ export type AcceptedJob = {
    * Unique job identifier; use this to poll for completion. For a sweep, pass this same value as the `requestId` path parameter to `executeSweep` — same identifier, different name at that call site.
    */
   jobId: string;
+};
+
+/**
+ * The `202` of a prepare: the job and the cadence the data is prepared at.
+ *
+ */
+export type PrepareAccepted = AcceptedJob & {
+  /**
+   * The cadence in effect: the one you asked for, or the plan's default when you asked for
+   * none. For `exchangeId: user`, the dataset's own cadence when you asked for none.
+   *
+   */
+  cadence: string;
 };
 
 /**
@@ -1854,25 +1873,27 @@ export type DatasetImportRequest = {
   to: string;
   /**
    * Optional; what it means, and what it accepts, depends on `type`. Any other value is
-   * `400`.
+   * `400`. A cadence your plan does not include is `402` (the "Cadences by plan" section of the Backtests guide lists them).
    *
-   * * `dex` — omitted/blank keeps native per-trade event cadence: each swap at its own
-   * timestamp, so the resulting version's `cadence` is `rt` unless the swaps happen to
-   * sit on a fixed grid (see `DatasetVersion.cadence`). Set to `1s`, `1m` or `5m`
-   * instead to get pre-aggregated candles at that width rather than raw trades (the
-   * resulting dataset's `type` becomes `klines`). Not every network supports every
-   * cadence — an unsupported combination fails asynchronously, not at request time (see
-   * `DatasetImportState.error`).
+   * * `dex` — candles at that width (the resulting dataset's `type` is `klines`), built from
+   * the nearest width the source serves. Omitted/blank = the plan's default; on a plan
+   * that includes the native rate of a source, omitted keeps native per-trade event
+   * cadence: each swap at its own timestamp, so the resulting version's `cadence` is `rt`
+   * unless the swaps happen to sit on a fixed grid (see `DatasetVersion.cadence`).
+   * Not every network supports candles — an unsupported combination fails
+   * asynchronously, not at request time (see `DatasetImportState.error`).
    * * `cex` — one of `1s`, `5s`, `1m`, `3m`, `5m`, `15m`, `30m`, `1h`, `2h`, `4h`, `8h`,
    * `12h`, `1d`, `1w`, `1q`, whether `dataType` is `ticker` or `klines`. Omitted = the
-   * finest cadence every part of the range holds.
+   * plan's default; on a plan that includes the native rate of a source, the finest
+   * cadence every part of the range holds.
    *
    * For `cex` the bars are built from the finest data every part of the range holds. A
    * `cadence` finer than that, or not an exact multiple of it, fails the import
    * asynchronously (`failed`; the `error` names the finest cadence the range holds) rather
    * than returning a dataset with a different cadence from the one asked for. So a range
    * whose history changes cadence part-way (from `1m` to `1s`, say) comes out entirely at
-   * the coarser one when `cadence` is omitted: the dataset has no gap that is only a
+   * the coarser one when the range decides it (a plan that includes the native rate, no
+   * `cadence`): the dataset has no gap that is only a
    * change of cadence.
    *
    */
@@ -1993,6 +2014,14 @@ export type DatasetImportCreated = {
    * Always `fetching` in this response — the fetch has only just started.
    */
   status: "fetching";
+  /**
+   * The cadence the dataset is built at: the one you asked for, or the plan's default when you
+   * asked for none (`rt` for the per-trade data of a `dex` import). Absent only for a `cex`
+   * import that named none on a plan that includes the native rate of a source: the range
+   * decides, and the dataset's `cadence` is in the poll below once it is ready.
+   *
+   */
+  cadence?: string;
 };
 
 /**
@@ -3589,6 +3618,13 @@ export type PrepareBacktestErrors = {
    */
   400: ResponseError;
   /**
+   * `cadence` is not one of the cadences your plan includes (see `PrepareRequest`); the message
+   * names it, your plan and what the plan includes. Does not apply to `exchangeId: user`.
+   * Retrying will not help until the plan changes, so there is no `Retry-After`.
+   *
+   */
+  402: PlanRequiredError;
+  /**
    * The API key behind the token does not carry the scope this operation needs; `required` names
    * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
    * the scopes of a token are the ones the key had when it was issued. See
@@ -3616,9 +3652,9 @@ export type PrepareBacktestError =
 
 export type PrepareBacktestResponses = {
   /**
-   * Prepare task accepted (queued for processing)
+   * Prepare task accepted (queued for processing), with the `cadence` in effect
    */
-  202: AcceptedJob;
+  202: PrepareAccepted;
 };
 
 export type PrepareBacktestResponse =
@@ -4521,6 +4557,14 @@ export type ImportDatasetErrors = {
    */
   400: ResponseError;
   /**
+   * `cadence` is not one of the cadences your plan includes, or the request would give you
+   * per-trade data (a `dex` import with no candle `cadence`) and your plan does not include it.
+   * The message names the plan and what it includes. Retrying will not help until the plan
+   * changes, so there is no `Retry-After`.
+   *
+   */
+  402: PlanRequiredError;
+  /**
    * The API key behind the token does not carry the scope this operation needs; `required` names
    * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
    * the scopes of a token are the ones the key had when it was issued. See
@@ -4545,7 +4589,7 @@ export type ImportDatasetError = ImportDatasetErrors[keyof ImportDatasetErrors];
 
 export type ImportDatasetResponses = {
   /**
-   * Dataset created, fetch started
+   * Dataset created, fetch started, with the `cadence` it is built at when that is known
    */
   202: DatasetImportCreated;
 };

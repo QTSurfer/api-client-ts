@@ -673,6 +673,11 @@ export const getStrategyCode = <ThrowOnError extends boolean = false>(
  * data can be prepared and is rejected by `execute` and `executeSweep`. A `kline` prepare takes
  * the bar width from `cadence` — see `PrepareRequest`.
  *
+ * The cadence of an exchange's data is held to your plan: the "Cadences by plan" section of the Backtests guide lists the cadences each
+ * plan includes. A cadence your plan does not include is `402`, and a request that names none
+ * gets the plan's default. The `202` says the `cadence` in effect. None of this applies to
+ * `exchangeId: user`: your own data is prepared at its own cadence, whatever the plan.
+ *
  * **`exchangeId: user` is reserved for your own uploaded data.** Instead of a managed
  * exchange, it prepares from a dataset you created via `POST /datasets` (see the **Dataset**
  * endpoints) — send `datasetId` in place of `instrument`. See `PrepareRequest` below for the
@@ -1309,16 +1314,25 @@ export const getDatasetUpload = <ThrowOnError extends boolean = false>(
  * picks tickers or klines and is also the resulting dataset's `type`. The range is capped by
  * your tier like any import (`maxImportRangeHours` of `GET /account`).
  *
- * A `dex` import has two data shapes, chosen by the top-level `cadence`:
+ * **An import is held to your plan's cadences,** the same ones as the preparation of an
+ * exchange's data (the "Cadences by plan" section of the Backtests guide). A `cadence` your plan does not include is `402`; a
+ * request that names none gets the plan's default; any other cadence your plan includes can be
+ * asked for. The `202` says the `cadence` the dataset is built at. An upload is not held to
+ * this: it is stored at the cadence detected in it.
  *
- * * Omitted/blank (default) — on-chain swap history, replayed directly from the pool/pair's
- * own chain. Cadence is native, not resampled: each swap keeps the timestamp it happened
- * at rather than being bucketed into candles, so the resulting version's `cadence` is `rt`
- * unless the swaps happen to sit on a fixed grid (see `DatasetVersion.cadence`).
- * * One of `1s` / `1m` / `5m` — pre-aggregated candles at that width instead of raw trades.
- * The resulting dataset's `type` is `klines`, not `ticker`. Not every network supports every
- * cadence yet — an unsupported combination fails asynchronously, same as an unresolvable
- * pool (see the `failed` status on the poll endpoint below).
+ * A `dex` import has two data shapes:
+ *
+ * * Candles at the `cadence` you ask for, or at the plan's default when you ask for none. Every
+ * cadence of the list is built, from the nearest width the source serves. The resulting dataset's `type` is `klines`, not `ticker`, and
+ * `dex.id` / `dex.version` are not needed. Not every network supports candles yet — an
+ * unsupported combination fails asynchronously, same as an unresolvable pool (see the
+ * `failed` status on the poll endpoint below).
+ * * On-chain swap history (per-trade data), replayed directly from the pool/pair's own chain —
+ * **only on a plan that includes the native rate of a source, and when `cadence` is omitted**.
+ * Cadence is native, not resampled: each swap
+ * keeps the timestamp it happened at rather than being bucketed into candles, so the
+ * resulting version's `cadence` is `rt` unless the swaps happen to sit on a fixed grid (see
+ * `DatasetVersion.cadence`). Needs `dex.id` and `dex.version`.
  *
  */
 export const importDataset = <ThrowOnError extends boolean = false>(

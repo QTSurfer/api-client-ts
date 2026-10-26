@@ -75,7 +75,7 @@ pluggable token stores so callers don't reinvent that plumbing.
 All operations are exported as standalone functions; every operation accepts an `Options` object and returns `{ data, error, response }`.
 
 The table is exhaustive: `src/generated/` is produced from the OpenAPI spec, so **all 48 operations**
-the spec declares are exported. The rows below describe **spec version 0.128.46**, which is versioned
+the spec declares are exported. The rows below describe **spec version 0.128.49**, which is versioned
 independently of this package.
 
 | Function | Method | Path | Purpose |
@@ -94,7 +94,7 @@ independently of this package.
 | `getStrategy` | GET | `/strategy/{strategyId}` | Get a strategy by id, including its validation state |
 | `deleteStrategy` | DELETE | `/strategy/{strategyId}` | Release a registered strategy |
 | `getStrategyCode` | GET | `/strategy/{strategyId}/code` | Get a registered strategy's source, if you still have one to read |
-| `prepareBacktest` | POST | `/backtest/{exchangeId}/{type}/prepare` | Prepare backtest data |
+| `prepareBacktest` | POST | `/backtest/{exchangeId}/{type}/prepare` | Prepare backtest data at an allowed cadence; the `202` includes the effective cadence and a plan refusal is typed `402` |
 | `getPrepareStatus` | GET | `/backtest/{exchangeId}/{type}/prepare/{jobId}` | Get the status of a prepare job |
 | `executeSweep` | POST | `/backtest/{exchangeId}/{type}/executeSweep/{requestId}` | Execute a parameter sweep over prepared data |
 | `getSweepResult` | GET | `/backtest/{exchangeId}/{type}/executeSweep/{requestId}/{sweepId}` | Get sweep progress and results |
@@ -111,7 +111,7 @@ independently of this package.
 | `openDatasetUpload` | POST | `/datasets/{datasetId}/uploads` | Open an upload session for a later dataset version |
 | `finalizeDatasetUpload` | POST | `/datasets/{datasetId}/uploads/{uploadId}/finalize` | Queue ingest after uploading a file |
 | `getDatasetUpload` | GET | `/datasets/{datasetId}/uploads/{uploadId}` | Get an upload's ingestion state |
-| `importDataset` | POST | `/datasets/imports` | Create a dataset by importing CEX market history or DEX pool history |
+| `importDataset` | POST | `/datasets/imports` | Import CEX market history or DEX pool history at a plan-allowed cadence; the `202` reports its cadence when known and plan refusals are typed `402` |
 | `getDatasetImport` | GET | `/datasets/{datasetId}/imports/{importId}` | Get an import's fetch and ingestion state |
 | `startLive` | POST | `/strategy/{strategyId}/live` | Start a compiled strategy on a live feed; request a sandbox run with `sandbox: true`, set its warm-up replay window with `warmFrom`, simulate fills and equity with `paper`, or request a plain WebSocket stream URL |
 | `getLive` | GET | `/strategy/{strategyId}/live` | Read a strategy's current or most recent live run |

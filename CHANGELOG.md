@@ -1,5 +1,11 @@
 # @qtsurfer/api-client
 
+## 0.28.0
+
+### Minor Changes
+
+- Regenerate for OpenAPI 0.128.49. Prepare and import requests now type plan-limited cadence refusals as HTTP 402 `PlanRequiredError`; accepted responses report the cadence in effect when known. Omitted cadence follows the plan's default, while native per-trade DEX imports remain available when the plan includes the source's native rate.
+
 ## 0.27.0
 
 ### Minor Changes
