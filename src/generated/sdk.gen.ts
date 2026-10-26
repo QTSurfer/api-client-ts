@@ -1499,6 +1499,12 @@ export const getLive = <ThrowOnError extends boolean = false>(
  * complete. The value in effect, yours or the platform's, comes back as `warmFrom`. It can be set only here,
  * when the run is started. See the "Live execution" guide, "Warming up".
  *
+ * **How long the sandbox lasts.** A new run is tried in the sandbox for at least as long as the shortest trial your plan
+ * gives, and for no more than 24 hours. Pass `sandboxMinutes` (an integer from 5 to 1440) to ask for a longer one; asking
+ * for less than your plan gives is `429`. Omitted, the run gets your plan's shortest trial. The value in effect comes back
+ * as `sandboxMinutes`. It can be set only here, when the run is started. See the "Live execution" guide, "How long the
+ * sandbox lasts".
+ *
  * **A plain WebSocket stream.** Pass `stream: true` to get a secret URL for this run's signals that a simple
  * client, or a service that passes them on to others, can open as an ordinary WebSocket, from the sandbox stage
  * on. The URL is in the response (`streamUrl`) and in `GET /strategy/{strategyId}/live`; treat it like a

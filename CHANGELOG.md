@@ -1,5 +1,11 @@
 # @qtsurfer/api-client
 
+## 0.27.0
+
+### Minor Changes
+
+- Regenerate for OpenAPI 0.128.47–0.128.48. Live starts accept and report `sandboxMinutes`; strategy compilation reports required plan capabilities, and plan exclusions return typed HTTP 402 `PlanRequiredError` responses with an optional upgrade URL.
+
 ## 0.26.0
 
 ### Minor Changes

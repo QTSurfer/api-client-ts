@@ -23,12 +23,26 @@ export type ResponseError = {
    * Whether sending the same request again can succeed. `true` for `408`, `425`, `429` and
    * every `5xx`; `false` for every other `4xx`, which fails the same way until the request
    * changes: a field of the wrong type, a strategy that does not compile, a missing
-   * parameter. A plan limit, a `429` without `Retry-After`, is `false`. When the answer
+   * parameter. A plan limit (a `402`, or a `429` without `Retry-After`) is `false`. When the answer
    * carries a `Retry-After`, wait that long before sending the request again.
    *
    */
   retryable?: boolean;
   next?: ErrorNextCall;
+};
+
+/**
+ * The error of a `402`: your plan does not include what the request asks for. It is a
+ * `ResponseError` (`retryable` is `false`) plus `upgradeUrl`.
+ *
+ */
+export type PlanRequiredError = ResponseError & {
+  /**
+   * The page where the plan can be changed. Present only when the platform has one for this
+   * environment; absent otherwise. A `402` is the only error that carries it.
+   *
+   */
+  upgradeUrl?: string;
 };
 
 /**
@@ -2189,6 +2203,19 @@ export type StartLiveRequest = {
    *
    */
   warmFrom?: number;
+  /**
+   * How long, in minutes, the run is tried in the `sandbox` stage before it can be promoted to `live`. Every plan has a
+   * shortest trial; asking for less than your plan gives is `429`, and the longest is 1440 (24 hours). Omitted, the run
+   * gets your plan's shortest. The trial is also not over until the platform has fed the run enough of the market
+   * feed to judge it, about one update for each second of the trial, so a run on a quiet instrument can stay in the
+   * sandbox past this time, up to the 24 hours. The value in effect is reported back as `sandboxMinutes` on the run.
+   * It can be set **only when the run is started**: changing it means stopping the run and starting it again.
+   * Anything that is not an integer from 5 to 1440 (a string, a fraction, `null`) is `400`. A start that goes
+   * straight to `live` because the strategy has already been through the trial has no sandbox and records none.
+   * See the "Live execution" guide, "How long the sandbox lasts".
+   *
+   */
+  sandboxMinutes?: number;
   name?: string;
   description?: string;
   paper?: LivePaperConfig;
@@ -2280,7 +2307,7 @@ export type LiveRun = {
   description?: string;
   visibility: "private" | "public";
   /**
-   * A new run starts `SANDBOX`, a 24-hour trial in which it is compared against a second execution and checked for resource use and stability. A run that passes moves to `LIVE` automatically when the 24 hours are up. A run of a strategy that an earlier run of yours already took through the trial starts `LIVE`, unless you started it with `sandbox: true`.
+   * A new run starts `SANDBOX`, a trial of `sandboxMinutes` minutes at least, and never more than 24 hours, in which it is compared against a second execution and checked for resource use and stability. A run that passes moves to `LIVE` automatically when the trial is over. A run of a strategy that an earlier run of yours already took through the trial starts `LIVE`, unless you started it with `sandbox: true`.
    */
   stage: "SANDBOX" | "LIVE";
   /**
@@ -2325,7 +2352,7 @@ export type LiveRun = {
    */
   startedAtMs: number;
   /**
-   * The sandbox trial's promotion verdict. Absent for the whole 24-hour trial and present once it ends, so an absent `gate` means the trial has not finished. A run that started in `LIVE` without a trial has it from the start: the verdict of the earlier run it relies on, with `inheritedFrom` naming that run. `passed` is the verdict; the rest is diagnostic detail whose shape is not yet stabilized as public API: treat it as opaque.
+   * The sandbox trial's promotion verdict. Absent for the whole trial and present once it ends, so an absent `gate` means the trial has not finished. A run that started in `LIVE` without a trial has it from the start: the verdict of the earlier run it relies on, with `inheritedFrom` naming that run. `passed` is the verdict; the rest is diagnostic detail whose shape is not yet stabilized as public API: treat it as opaque.
    */
   gate?: {
     [key: string]: unknown;
@@ -2389,10 +2416,16 @@ export type LiveRunStats = {
 export type WarmFrom = number;
 
 /**
+ * The sandbox trial this run was given, in minutes: the one requested when the run was started or, when none was, the shortest one its plan gives. It is a minimum: a run that has not yet been fed enough of the market feed to be judged stays in the sandbox past it, up to 24 hours. It is never `null`. It is absent from a run that has none: one started before the field existed, and one that started in `LIVE` without a trial. It never changes while the run exists.
+ */
+export type SandboxMinutes = number;
+
+/**
  * A run as returned by `GET /live/{runId}`, the full state of `LiveRun` plus when it last changed.
  */
 export type LiveRunDetail = LiveRun & {
   warmFrom?: WarmFrom;
+  sandboxMinutes?: SandboxMinutes;
   /**
    * Epoch milliseconds of the run's last change, from any cause. It only moves forward, so of two reads of the same run the one with the larger value is the newer.
    */
@@ -2400,13 +2433,14 @@ export type LiveRunDetail = LiveRun & {
 };
 
 /**
- * A run as `LiveRun` describes it, plus its `warmFrom` (absent only for a run started before the field existed) and its `streamUrl` when it has one. It is what **starting a run** and
+ * A run as `LiveRun` describes it, plus its `warmFrom` (absent only for a run started before the field existed), its `sandboxMinutes` (absent from a run that has no trial) and its `streamUrl` when it has one. It is what **starting a run** and
  * `GET /strategy/{strategyId}/live` return: your own run, read with your own credentials. Stopping a run
- * returns `LiveRun`, which carries neither `warmFrom` nor the URL, and `GET /live/{runId}` returns `LiveRunDetail`, which carries `warmFrom` and never the URL.
+ * returns `LiveRun`, which carries none of `warmFrom`, `sandboxMinutes` or the URL, and `GET /live/{runId}` returns `LiveRunDetail`, which carries `warmFrom` and `sandboxMinutes` and never the URL.
  *
  */
 export type LiveRunWithStream = LiveRun & {
   warmFrom?: WarmFrom;
+  sandboxMinutes?: SandboxMinutes;
   /**
    * The run's secret stream URL (`wss://…`). **Treat it like a password**: anyone who holds it can read
    * this run's signals, from the sandbox stage on. Present only when the run was started with
@@ -2465,7 +2499,7 @@ export type LiveRunSummary = {
   description?: string;
   visibility: "private" | "public";
   /**
-   * A new run starts `SANDBOX`, a 24-hour trial in which it is compared against a second execution and checked for resource use and stability. A run that passes moves to `LIVE` automatically when the 24 hours are up. A run of a strategy that an earlier run of yours already took through the trial starts `LIVE`, unless you started it with `sandbox: true`.
+   * A new run starts `SANDBOX`, a trial of `sandboxMinutes` minutes at least, and never more than 24 hours, in which it is compared against a second execution and checked for resource use and stability. A run that passes moves to `LIVE` automatically when the trial is over. A run of a strategy that an earlier run of yours already took through the trial starts `LIVE`, unless you started it with `sandbox: true`.
    */
   stage: "SANDBOX" | "LIVE";
   /**
@@ -3319,6 +3353,15 @@ export type CompileStrategyResponses = {
      *
      */
     declaredProperties?: Array<DeclaredProperty>;
+    /**
+     * What the strategy needs from your plan, read from the compiled strategy and not from how
+     * it is written. `["indicators.pro"]` when it uses the pro indicators, `[]` when it needs
+     * nothing more. Registering is accepted on every plan; a plan without what it lists cannot
+     * run the strategy (`402`, see `PlanRequiredError`). Only this response carries it:
+     * `GET /strategy/{strategyId}` does not.
+     *
+     */
+    requires?: Array<"indicators.pro">;
   };
 };
 
@@ -3338,6 +3381,13 @@ export type ValidateStrategyData = {
 };
 
 export type ValidateStrategyErrors = {
+  /**
+   * The strategy uses the pro indicators and your plan does not include them: the message names the first
+   * one it asks for, the line of your file and your plan. Registering it was accepted; running it is not.
+   * Retrying will not help until the plan changes, so there is no `Retry-After`.
+   *
+   */
+  402: PlanRequiredError;
   /**
    * The API key behind the token does not carry the scope this operation needs; `required` names
    * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
@@ -3652,6 +3702,13 @@ export type ExecuteSweepErrors = {
    */
   400: ResponseError;
   /**
+   * The strategy uses the pro indicators and your plan does not include them: the message names the first
+   * one it asks for, the line of your file and your plan. Registering it was accepted; running it is not.
+   * Retrying will not help until the plan changes, so there is no `Retry-After`.
+   *
+   */
+  402: PlanRequiredError;
+  /**
    * The API key behind the token does not carry the scope this operation needs; `required` names
    * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
    * the scopes of a token are the ones the key had when it was issued. See
@@ -3960,6 +4017,13 @@ export type ExecuteBacktestErrors = {
    *
    */
   400: ResponseError;
+  /**
+   * The strategy uses the pro indicators and your plan does not include them: the message names the first
+   * one it asks for, the line of your file and your plan. Registering it was accepted; running it is not.
+   * Retrying will not help until the plan changes, so there is no `Retry-After`.
+   *
+   */
+  402: PlanRequiredError;
   /**
    * The API key behind the token does not carry the scope this operation needs; `required` names
    * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
@@ -4624,9 +4688,21 @@ export type StartLiveData = {
 
 export type StartLiveErrors = {
   /**
-   * Malformed `sources` (not exactly one entry, missing field, unsupported `type`), a `venueType`, `exchange` and `segment` that `GET /exchanges` does not list together, or a segment with no live data (the message names what it lists), a `type` the strategy cannot consume (a ticker strategy with a `kline` source, or the reverse; the message names both), an invalid `visibility`, an invalid `paper` block (an unknown field, a wrong type or an out-of-range value), or no `paper` block for a strategy that listens to its own execution events. A `relay` or `stream` that is not `true` or `false`, or a `stream` where streams are not available yet. A `warmFrom` that is not an integer from 0 to 3600. An `instruments` that is empty or `null`.
+   * Malformed `sources` (not exactly one entry, missing field, unsupported `type`), a `venueType`, `exchange` and `segment` that `GET /exchanges` does not list together, or a segment with no live data (the message names what it lists), a `type` the strategy cannot consume (a ticker strategy with a `kline` source, or the reverse; the message names both), an invalid `visibility`, an invalid `paper` block (an unknown field, a wrong type or an out-of-range value), or no `paper` block for a strategy that listens to its own execution events. A `relay` or `stream` that is not `true` or `false`, or a `stream` where streams are not available yet. A `warmFrom` that is not an integer from 0 to 3600. A `sandboxMinutes` that is not an integer from 5 to 1440. An `instruments` that is empty or `null`.
    */
   400: ResponseError;
+  /**
+   * Your plan does not include what the request asks for. The message says which, in one of these
+   * forms: the plan has **no live runs** (`Live runs are not included in tier free. Upgrade your plan to
+   * run strategies live.`); it does not let you ask for a `stream` (`A flat signal stream is not included in
+   * tier basic. Upgrade your plan to broadcast a run's signals.`); it does not admit a **wildcard**
+   * instrument list, `*` or a pair with a `*` on one side (`Tier pro does not include wildcard ('*')
+   * instruments in a live run. List the instruments you need (up to 30).`); or the strategy uses the pro
+   * indicators and the plan does not include them (`strategy uses pro indicators (pro.adx, QTScript
+   * line 7); your plan: free`). Retrying will not help until the plan changes, so there is no `Retry-After`.
+   *
+   */
+  402: PlanRequiredError;
   /**
    * The API key behind the token does not carry the scope this operation needs; `required` names
    * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
@@ -4644,10 +4720,10 @@ export type StartLiveErrors = {
    */
   409: ResponseError;
   /**
-   * One of two kinds. **Your plan** does not include live runs, would exceed your concurrent-run or
-   * instrument-count limit, or does not let you ask for a `stream`: the message names your plan, and
-   * retrying will not help until something changes, so there is no `Retry-After`. Or **the platform is at
-   * capacity** right now: a `Retry-After` header says when to try again.
+   * One of two kinds. **A limit of your plan** is reached: more runs than your concurrent-run limit, more
+   * instruments in a list than your plan allows, or a `sandboxMinutes` shorter than the trial your plan gives.
+   * The message names your plan, and retrying will not help until something changes, so there is no
+   * `Retry-After`. Or **the platform is at capacity** right now: a `Retry-After` header says when to try again.
    *
    */
   429: ResponseError;
@@ -4976,6 +5052,10 @@ export type RotateLiveStreamData = {
 
 export type RotateLiveStreamErrors = {
   /**
+   * Your plan does not let you broadcast a run's signals. The message names your plan; retrying will not help until it changes, so there is no `Retry-After`.
+   */
+  402: PlanRequiredError;
+  /**
    * The API key behind the token does not carry the scope this operation needs; `required` names
    * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
    * the scopes of a token are the ones the key had when it was issued. See
@@ -4993,10 +5073,6 @@ export type RotateLiveStreamErrors = {
    *
    */
   409: ResponseError;
-  /**
-   * Your plan does not let you broadcast a run's signals. The message names your plan; retrying will not help until it changes, so there is no `Retry-After`.
-   */
-  429: ResponseError;
 };
 
 export type RotateLiveStreamError =

@@ -27,7 +27,7 @@ the values it uses. A client treats a value it does not know like an absent \`re
       description: `Whether sending the same request again can succeed. \`true\` for \`408\`, \`425\`, \`429\` and
 every \`5xx\`; \`false\` for every other \`4xx\`, which fails the same way until the request
 changes: a field of the wrong type, a strategy that does not compile, a missing
-parameter. A plan limit, a \`429\` without \`Retry-After\`, is \`false\`. When the answer
+parameter. A plan limit (a \`402\`, or a \`429\` without \`Retry-After\`) is \`false\`. When the answer
 carries a \`Retry-After\`, wait that long before sending the request again.
 `,
       type: "boolean",
@@ -37,6 +37,30 @@ carries a \`Retry-After\`, wait that long before sending the request again.
       $ref: "#/components/schemas/ErrorNextCall",
     },
   },
+} as const;
+
+export const PlanRequiredErrorSchema = {
+  description: `The error of a \`402\`: your plan does not include what the request asks for. It is a
+\`ResponseError\` (\`retryable\` is \`false\`) plus \`upgradeUrl\`.
+`,
+  allOf: [
+    {
+      $ref: "#/components/schemas/ResponseError",
+    },
+    {
+      type: "object",
+      properties: {
+        upgradeUrl: {
+          description: `The page where the plan can be changed. Present only when the platform has one for this
+environment; absent otherwise. A \`402\` is the only error that carries it.
+`,
+          type: "string",
+          format: "uri",
+          example: "https://example.com/upgrade",
+        },
+      },
+    },
+  ],
 } as const;
 
 export const ErrorNextCallSchema = {
@@ -3479,6 +3503,21 @@ changing it means stopping the run and starting it again. Anything that is not a
 is \`400\`. See the "Live execution" guide, "Warming up".
 `,
     },
+    sandboxMinutes: {
+      type: "integer",
+      minimum: 5,
+      maximum: 1440,
+      description: `How long, in minutes, the run is tried in the \`sandbox\` stage before it can be promoted to \`live\`. Every plan has a
+shortest trial; asking for less than your plan gives is \`429\`, and the longest is 1440 (24 hours). Omitted, the run
+gets your plan's shortest. The trial is also not over until the platform has fed the run enough of the market
+feed to judge it, about one update for each second of the trial, so a run on a quiet instrument can stay in the
+sandbox past this time, up to the 24 hours. The value in effect is reported back as \`sandboxMinutes\` on the run.
+It can be set **only when the run is started**: changing it means stopping the run and starting it again.
+Anything that is not an integer from 5 to 1440 (a string, a fraction, \`null\`) is \`400\`. A start that goes
+straight to \`live\` because the strategy has already been through the trial has no sandbox and records none.
+See the "Live execution" guide, "How long the sandbox lasts".
+`,
+    },
     name: {
       type: "string",
     },
@@ -3649,7 +3688,7 @@ export const LiveRunSchema = {
       type: "string",
       enum: ["SANDBOX", "LIVE"],
       description:
-        "A new run starts `SANDBOX`, a 24-hour trial in which it is compared against a second execution and checked for resource use and stability. A run that passes moves to `LIVE` automatically when the 24 hours are up. A run of a strategy that an earlier run of yours already took through the trial starts `LIVE`, unless you started it with `sandbox: true`.",
+        "A new run starts `SANDBOX`, a trial of `sandboxMinutes` minutes at least, and never more than 24 hours, in which it is compared against a second execution and checked for resource use and stability. A run that passes moves to `LIVE` automatically when the trial is over. A run of a strategy that an earlier run of yours already took through the trial starts `LIVE`, unless you started it with `sandbox: true`.",
     },
     state: {
       type: "string",
@@ -3707,7 +3746,7 @@ is stopped by the platform itself (\`desired: STOPPED\`), so it holds no place.
       type: "object",
       additionalProperties: true,
       description:
-        "The sandbox trial's promotion verdict. Absent for the whole 24-hour trial and present once it ends, so an absent `gate` means the trial has not finished. A run that started in `LIVE` without a trial has it from the start: the verdict of the earlier run it relies on, with `inheritedFrom` naming that run. `passed` is the verdict; the rest is diagnostic detail whose shape is not yet stabilized as public API: treat it as opaque.",
+        "The sandbox trial's promotion verdict. Absent for the whole trial and present once it ends, so an absent `gate` means the trial has not finished. A run that started in `LIVE` without a trial has it from the start: the verdict of the earlier run it relies on, with `inheritedFrom` naming that run. `passed` is the verdict; the rest is diagnostic detail whose shape is not yet stabilized as public API: treat it as opaque.",
     },
     paper: {
       allOf: [
@@ -3788,6 +3827,14 @@ export const WarmFromSchema = {
     "The `warmFrom` in effect for this run, in seconds: the one requested when the run was started or, when none was, the one the platform chose (the distance from the run's start back to the start of the current 15-minute block, 0 to 900). It is never `null`. It is present on every run started since the field exists and absent from a run started before it existed. It never changes while the run exists.",
 } as const;
 
+export const SandboxMinutesSchema = {
+  type: "integer",
+  minimum: 5,
+  maximum: 1440,
+  description:
+    "The sandbox trial this run was given, in minutes: the one requested when the run was started or, when none was, the shortest one its plan gives. It is a minimum: a run that has not yet been fed enough of the market feed to be judged stays in the sandbox past it, up to 24 hours. It is never `null`. It is absent from a run that has none: one started before the field existed, and one that started in `LIVE` without a trial. It never changes while the run exists.",
+} as const;
+
 export const LiveRunDetailSchema = {
   description:
     "A run as returned by `GET /live/{runId}`, the full state of `LiveRun` plus when it last changed.",
@@ -3802,6 +3849,9 @@ export const LiveRunDetailSchema = {
         warmFrom: {
           $ref: "#/components/schemas/WarmFrom",
         },
+        sandboxMinutes: {
+          $ref: "#/components/schemas/SandboxMinutes",
+        },
         updatedAtMs: {
           type: "integer",
           format: "int64",
@@ -3814,9 +3864,9 @@ export const LiveRunDetailSchema = {
 } as const;
 
 export const LiveRunWithStreamSchema = {
-  description: `A run as \`LiveRun\` describes it, plus its \`warmFrom\` (absent only for a run started before the field existed) and its \`streamUrl\` when it has one. It is what **starting a run** and
+  description: `A run as \`LiveRun\` describes it, plus its \`warmFrom\` (absent only for a run started before the field existed), its \`sandboxMinutes\` (absent from a run that has no trial) and its \`streamUrl\` when it has one. It is what **starting a run** and
 \`GET /strategy/{strategyId}/live\` return: your own run, read with your own credentials. Stopping a run
-returns \`LiveRun\`, which carries neither \`warmFrom\` nor the URL, and \`GET /live/{runId}\` returns \`LiveRunDetail\`, which carries \`warmFrom\` and never the URL.
+returns \`LiveRun\`, which carries none of \`warmFrom\`, \`sandboxMinutes\` or the URL, and \`GET /live/{runId}\` returns \`LiveRunDetail\`, which carries \`warmFrom\` and \`sandboxMinutes\` and never the URL.
 `,
   allOf: [
     {
@@ -3827,6 +3877,9 @@ returns \`LiveRun\`, which carries neither \`warmFrom\` nor the URL, and \`GET /
       properties: {
         warmFrom: {
           $ref: "#/components/schemas/WarmFrom",
+        },
+        sandboxMinutes: {
+          $ref: "#/components/schemas/SandboxMinutes",
         },
         streamUrl: {
           type: "string",
@@ -3946,7 +3999,7 @@ export const LiveRunSummarySchema = {
       type: "string",
       enum: ["SANDBOX", "LIVE"],
       description:
-        "A new run starts `SANDBOX`, a 24-hour trial in which it is compared against a second execution and checked for resource use and stability. A run that passes moves to `LIVE` automatically when the 24 hours are up. A run of a strategy that an earlier run of yours already took through the trial starts `LIVE`, unless you started it with `sandbox: true`.",
+        "A new run starts `SANDBOX`, a trial of `sandboxMinutes` minutes at least, and never more than 24 hours, in which it is compared against a second execution and checked for resource use and stability. A run that passes moves to `LIVE` automatically when the trial is over. A run of a strategy that an earlier run of yours already took through the trial starts `LIVE`, unless you started it with `sandbox: true`.",
     },
     state: {
       type: "string",
