@@ -1,5 +1,11 @@
 # @qtsurfer/api-client
 
+## 0.29.0
+
+### Minor Changes
+
+- Regenerate for OpenAPI 0.128.50. DEX imports now accept Solana pool addresses, build candles at the plan default, and document the 180-day candle history limit and sparse bars.
+
 ## 0.28.0
 
 ### Minor Changes

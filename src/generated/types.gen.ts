@@ -1881,7 +1881,8 @@ export type DatasetImportRequest = {
    * cadence: each swap at its own timestamp, so the resulting version's `cadence` is `rt`
    * unless the swaps happen to sit on a fixed grid (see `DatasetVersion.cadence`).
    * Not every network supports candles — an unsupported combination fails
-   * asynchronously, not at request time (see `DatasetImportState.error`).
+   * asynchronously, not at request time (see `DatasetImportState.error`). On `solana`,
+   * which has candles only, omitted is the plan's default as candles on every plan.
    * * `cex` — one of `1s`, `5s`, `1m`, `3m`, `5m`, `15m`, `30m`, `1h`, `2h`, `4h`, `8h`,
    * `12h`, `1d`, `1w`, `1q`, whether `dataType` is `ticker` or `klines`. Omitted = the
    * plan's default; on a plan that includes the native rate of a source, the finest
@@ -1933,9 +1934,11 @@ export type DatasetImportRequest = {
  */
 export type DatasetImportDexRequest = {
   /**
-   * Which chain the pool/pair lives on.
+   * Which chain the pool/pair lives on. `solana` has candles only: no per-trade import, so
+   * the plan's default cadence is built as candles there on every plan.
+   *
    */
-  network: "ethereum" | "robinhood";
+  network: "ethereum" | "robinhood" | "solana";
   /**
    * Which on-chain DEX protocol `contract` implements. Required unless the top-level
    * `cadence` requested pre-aggregated candles, in which case it's ignored.
@@ -1949,7 +1952,9 @@ export type DatasetImportDexRequest = {
    */
   version?: "v2" | "v3";
   /**
-   * The pool (v3) or pair (v2) contract address.
+   * The pool (v3) or pair (v2) contract address. On `solana`, the pool address in base58,
+   * case-sensitive: send it exactly as it is written.
+   *
    */
   contract: string;
   /**
@@ -4537,7 +4542,8 @@ export type ImportDatasetData = {
 export type ImportDatasetErrors = {
   /**
    * Invalid request; `instrument` isn't a plain spot pair; `from >= to`; `cadence` present
-   * but not one of its supported values; the requested range exceeds your tier's import
+   * but not one of its supported values; a candle import whose `from` is earlier than the
+   * history candles reach back; the requested range exceeds your tier's import
    * range ceiling; the requested range's rough size estimate exceeds your tier's row limit;
    * `dex.network`/`dex.id` not one of their supported values; `dex.contract`/`dex.factory`
    * fail basic shape validation; or, when `cadence` is omitted, `dex.id`/`dex.version`
