@@ -3762,6 +3762,13 @@ export type ExecuteSweepErrors = {
    */
   404: ResponseError;
   /**
+   * The strategy, as it was compiled, no longer works with the current version of the platform because a release
+   * removed something it calls. Nothing is enqueued: register the strategy again (`POST /strategy` with the same
+   * source) and submit again.
+   *
+   */
+  409: ResponseError;
+  /**
    * Sweep queue or user concurrency limit reached.
    */
   429: ResponseError;
@@ -4077,6 +4084,13 @@ export type ExecuteBacktestErrors = {
    * Prepare job not found or expired
    */
   404: ResponseError;
+  /**
+   * The strategy, as it was compiled, no longer works with the current version of the platform because a release
+   * removed something it calls. Nothing is enqueued: register the strategy again (`POST /strategy` with the same
+   * source) and submit again.
+   *
+   */
+  409: ResponseError;
   /**
    * Rate limited (global queue at capacity or per-user limit reached)
    */
@@ -4766,7 +4780,11 @@ export type StartLiveErrors = {
    */
   404: ResponseError;
   /**
-   * A run for this strategy is already active. Stop it first.
+   * A run for this strategy is already active (stop it first), or the strategy as it was compiled no longer
+   * works with the current version of the platform because a release removed something it calls. In that
+   * case no run is created and no place is taken: register the strategy again (`POST /strategy` with the same
+   * source) and start it. The message says which of the two it is.
+   *
    */
   409: ResponseError;
   /**

@@ -42,6 +42,20 @@ if (error) throw error;
 console.log(exchanges);
 ```
 
+Requests whose first hostname label is `api` automatically retry once after `fetch` fails before
+receiving an HTTP response: `api.qtsurfer.net` retries at `api2.qtsurfer.net`, and
+`api.qtsurfer.com` retries at `api2.qtsurfer.com`. HTTP status responses are returned as-is, and
+the next request starts at the primary hostname again. The same transport wrapper supports signed
+URLs whose first hostname label is `storage`, retrying at `storage2` while preserving the domain
+suffix, path, and query.
+If you supply a custom `fetch` implementation, wrap it with `withNetworkFailoverFetch`:
+
+```ts
+import { client, withNetworkFailoverFetch } from '@qtsurfer/api-client';
+
+client.setConfig({ fetch: withNetworkFailoverFetch(customFetch) });
+```
+
 ### API key → JWT
 
 Every endpoint above expects a short-lived JWT in `Authorization: Bearer …`.
@@ -75,7 +89,7 @@ pluggable token stores so callers don't reinvent that plumbing.
 All operations are exported as standalone functions; every operation accepts an `Options` object and returns `{ data, error, response }`.
 
 The table is exhaustive: `src/generated/` is produced from the OpenAPI spec, so **all 48 operations**
-the spec declares are exported. The rows below describe **spec version 0.128.49**, which is versioned
+the spec declares are exported. The rows below describe **spec version 0.128.54**, which is versioned
 independently of this package.
 
 | Function | Method | Path | Purpose |
@@ -96,12 +110,12 @@ independently of this package.
 | `getStrategyCode` | GET | `/strategy/{strategyId}/code` | Get a registered strategy's source, if you still have one to read |
 | `prepareBacktest` | POST | `/backtest/{exchangeId}/{type}/prepare` | Prepare backtest data at an allowed cadence; the `202` includes the effective cadence and a plan refusal is typed `402` |
 | `getPrepareStatus` | GET | `/backtest/{exchangeId}/{type}/prepare/{jobId}` | Get the status of a prepare job |
-| `executeSweep` | POST | `/backtest/{exchangeId}/{type}/executeSweep/{requestId}` | Execute a parameter sweep over prepared data |
+| `executeSweep` | POST | `/backtest/{exchangeId}/{type}/executeSweep/{requestId}` | Execute a parameter sweep over prepared data; HTTP `409` can require re-registering a strategy compiled for an older platform version |
 | `getSweepResult` | GET | `/backtest/{exchangeId}/{type}/executeSweep/{requestId}/{sweepId}` | Get sweep progress and results |
 | `cancelSweep` | DELETE | `/backtest/{exchangeId}/{type}/executeSweep/{requestId}/{sweepId}` | Cancel a running parameter sweep |
 | `getSweepSensitivity` | GET | `/backtest/{exchangeId}/{type}/executeSweep/{requestId}/{sweepId}/sensitivity` | Get sweep sensitivity surfaces |
 | `getSweepRunEquityCurve` | GET | `/backtest/{exchangeId}/{type}/executeSweep/{requestId}/{sweepId}/runs/{runIx}/equityCurve` | Get one sweep trial's equity curve |
-| `executeBacktest` | POST | `/backtest/{exchangeId}/{type}/execute` | Execute a compiled strategy against a prepared dataset |
+| `executeBacktest` | POST | `/backtest/{exchangeId}/{type}/execute` | Execute a compiled strategy against a prepared dataset; HTTP `409` can require re-registering a strategy compiled for an older platform version |
 | `cancelBacktest` | DELETE | `/backtest/{exchangeId}/{type}/execute/{jobId}` | Cancel a running backtest execution |
 | `getBacktestResult` | GET | `/backtest/{exchangeId}/{type}/execute/{jobId}` | Get the result of a backtest execution job |
 | `listDatasets` | GET | `/datasets` | List your datasets, optionally including deleted datasets and their deletion times |
@@ -113,7 +127,7 @@ independently of this package.
 | `getDatasetUpload` | GET | `/datasets/{datasetId}/uploads/{uploadId}` | Get an upload's ingestion state |
 | `importDataset` | POST | `/datasets/imports` | Import CEX market history or DEX pool history at a plan-allowed cadence; the `202` reports its cadence when known and plan refusals are typed `402` |
 | `getDatasetImport` | GET | `/datasets/{datasetId}/imports/{importId}` | Get an import's fetch and ingestion state |
-| `startLive` | POST | `/strategy/{strategyId}/live` | Start a compiled strategy on a live feed; request a sandbox run with `sandbox: true`, set its warm-up replay window with `warmFrom`, simulate fills and equity with `paper`, or request a plain WebSocket stream URL |
+| `startLive` | POST | `/strategy/{strategyId}/live` | Start a compiled strategy on a live feed; request a sandbox run with `sandbox: true`, set its warm-up replay window with `warmFrom`, simulate fills and equity with `paper`, or request a plain WebSocket stream URL; HTTP `409` can require re-registering a strategy compiled for an older platform version |
 | `getLive` | GET | `/strategy/{strategyId}/live` | Read a strategy's current or most recent live run |
 | `stopLive` | DELETE | `/strategy/{strategyId}/live` | Request a strategy's active live run to stop |
 | `listLive` | GET | `/live` | Page all live runs owned by the authenticated account |
@@ -155,6 +169,11 @@ distinct from `POST /auth/token` returning `403 apikey_without_scopes` before is
 `ResponseError.retryable` says whether resending the same request may succeed; honor
 `Retry-After` when present. `JobState.retryable` reports whether a failed execution may succeed
 if submitted again.
+
+Execution and live-start routes can return HTTP `409` when the compiled strategy no longer works
+with the current platform because a release removed something it calls. Nothing is queued; register
+the same source again with `compileStrategy` and submit the new `strategyId`. `startLive` also uses
+`409` when a run is already active, so read the error message to distinguish the cases.
 
 ```ts
 const { data, error, response } = await listDatasets();

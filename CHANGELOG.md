@@ -1,5 +1,13 @@
 # @qtsurfer/api-client
 
+## 0.30.0
+
+### Minor Changes
+
+- Regenerate for OpenAPI 0.128.54. Execution and live-start operations now type HTTP 409 responses for compiled strategies incompatible with the current platform version.
+
+  Add one-shot `api2.qtsurfer.net` and `storage2.qtsurfer.net` network failover for requests whose primary fetch fails before an HTTP response.
+
 ## 0.29.0
 
 ### Minor Changes
