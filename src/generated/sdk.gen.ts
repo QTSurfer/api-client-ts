@@ -130,6 +130,12 @@ import type {
   SendLiveCommandData,
   SendLiveCommandResponse,
   SendLiveCommandError,
+  AttachLiveSourceData,
+  AttachLiveSourceResponse,
+  AttachLiveSourceError,
+  DetachLiveSourceData,
+  DetachLiveSourceResponse,
+  DetachLiveSourceError,
   RevokeLiveStreamData,
   RevokeLiveStreamResponse,
   RevokeLiveStreamError,
@@ -178,6 +184,13 @@ export type Options<
  * The returned JWT carries the caller's subscription `tier` as a claim and
  * expires after `expires_in` seconds. Callers should refresh the token
  * before expiry (or on a `401` response) by calling this endpoint again.
+ *
+ * An API key can have an expiry of its own. When it does, the answer's `key_exp` says when
+ * the key stops working, in seconds since epoch, so you can rotate it ahead of time instead
+ * of finding out from a `401`. The same value is the `key_exp` claim of the token and the
+ * `apiKeyExpiresAt` of `GET /account`. A key that never expires has no `key_exp`. It is the
+ * key's expiry, not the token's: a token issued just before the key lapses keeps working
+ * until its own `expires_in` is over.
  *
  * The answer's `scopes` say what the key may do. Where a deployment requires scopes, a key
  * that carries none is refused with `403` and the code `apikey_without_scopes`: create a key
@@ -1113,9 +1126,12 @@ export const listDatasets = <ThrowOnError extends boolean = false>(
  * **Upload format.** A CSV with a header row, a parquet file with the same columns by
  * name, or a lastra file — our own native columnar format, the same one a dataset's
  * `dataUrl` hands back by default, so a downloaded dataset can be handed to another user to
- * upload with no conversion in between. For CSV/parquet, required: `timestamp` (ISO-8601, or
- * numeric epoch seconds/millis/micros — detected from the first row, then enforced for every
- * later row), `close`. Optional: `open`, `high`, `low`, `volume`, `quoteVolume`, `bid`,
+ * upload with no conversion in between. For CSV/parquet, required: `timestamp` (an ISO-8601
+ * date or date-time, or numeric epoch seconds/millis/micros — detected from the first row,
+ * then enforced for every later row), `close`. A date alone (`2010-06-29`) is midnight UTC; a
+ * date-time with no zone (`2010-06-29T14:30:00` or `2010-06-29 14:30:00`) is UTC; an offset
+ * or `Z` is honoured; day-first and month-first dates are not accepted. The Datasets guide
+ * lists the forms. Optional: `open`, `high`, `low`, `volume`, `quoteVolume`, `bid`,
  * `bidSize`, `ask`, `askSize`. A lastra upload carries its own fixed column set instead and
  * only needs a timestamp series and a close series present. Cadence and timestamp unit are
  * discovered from the data, not declared, for all three.
@@ -1481,7 +1497,7 @@ export const getLive = <ThrowOnError extends boolean = false>(
  * Only one run per strategy at a time — starting again while one is already running is `409`;
  * stop the current one first.
  *
- * `sources` takes exactly one entry today (multi-source strategies are not supported yet).
+ * `sources` takes one entry, or none: a start with no `sources` makes a run that waits for a source (see `POST /live/{runId}/attachments`).
  * `type` is `ticker` or `kline`; anything else is rejected. Both connect to the lightest
  * (fastest) cadence available for the exchange — today that is 1 tick/second on every
  * supported exchange; choosing among several cadences is not offered yet.
@@ -1752,6 +1768,79 @@ export const sendLiveCommand = <ThrowOnError extends boolean = false>(
       "Content-Type": "application/json",
       ...options?.headers,
     },
+  });
+};
+
+/**
+ * Attach a market-data source to a run
+ * Attaches one market-data source to a run, **while it stays live**. A run can start with no `sources` and
+ * wait; this is how it is given something to read, and how a run that is already reading something is given
+ * another. Owner only.
+ *
+ * `source` is the same entry `sources` takes at start and is checked the same way (see "Sources" in the Live
+ * execution guide). `warmFrom` is how many seconds of the feed before the attachment the strategy sees first,
+ * `0` to `3600`, for this source only; left out, the same default as at start. `ref` is a string of yours, up to
+ * 64 characters: sending the same `ref` to the same run answers the attachment it already made instead of
+ * making another one, so a retried request or a repeated alert is safe. So does sending a source the run
+ * already has attached or being attached, whatever its `ref`.
+ *
+ * Every source attached to a run at the same time is on the same market feed: the same exchange for a `cex`, the
+ * same chain for a `dex`.
+ *
+ * The first source of a waiting run starts it. Any other attach takes effect at `effectiveAtMs`, a moment a few
+ * seconds ahead that every execution behind the run applies at the same market position. The `202` is the
+ * acceptance: read the run's `attachments` for the `state`.
+ *
+ */
+export const attachLiveSource = <ThrowOnError extends boolean = false>(
+  options: Options<AttachLiveSourceData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).post<
+    AttachLiveSourceResponse,
+    AttachLiveSourceError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/live/{runId}/attachments",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  });
+};
+
+/**
+ * Detach a market-data source from a run
+ * Detaches a source from a run, **while it stays live**. Owner only. It takes effect at the attachment's
+ * `effectiveAtMs`, applied at the same market position by every execution behind the run. Positions a paper
+ * account had open in that source's instruments are reported as gaps. When the last source is detached the run
+ * waits again: the strategy's memory is released and the paper accounts are kept.
+ *
+ * Repeating it on an attachment already detached, or being detached, is not an error.
+ *
+ */
+export const detachLiveSource = <ThrowOnError extends boolean = false>(
+  options: Options<DetachLiveSourceData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).delete<
+    DetachLiveSourceResponse,
+    DetachLiveSourceError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/live/{runId}/attachments/{attachmentId}",
+    ...options,
   });
 };
 

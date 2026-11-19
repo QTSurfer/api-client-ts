@@ -517,6 +517,17 @@ one doesn't.
     scopes: {
       $ref: "#/components/schemas/KeyScopes",
     },
+    apiKeyExpiresAt: {
+      type: ["string", "null"],
+      format: "date-time",
+      description: `When the API key behind this token stops working, UTC. Always in the answer; \`null\` when
+no key expiry applies: a key that never expires, a token issued before this field existed
+(ask for a new one), or a credential that is not an API key. It is the same moment as the
+\`key_exp\` of \`POST /auth/token\`. Rotate the key before it: after it, \`POST /auth/token\`
+answers \`401\`. A token already issued keeps working until its own expiry.
+`,
+      example: "2026-12-05T10:05:00Z",
+    },
     maxExecute: {
       type: "integer",
       description: `Maximum number of strategy executions (and sweeps) you can have running at the same time
@@ -2993,9 +3004,11 @@ that can itself age out — see the \`404\` case on \`GET .../uploads/{uploadId}
     error: {
       type: "string",
       description: `A human-readable reason, present when \`status\` is \`failed\` (e.g. bad CSV contract,
-mixed timestamp units, a \`.zip\` with no file inside or more than one). Durably
-recorded alongside the failure itself, so it stays available however long after the
-fact you poll — not tied to how recently the failure happened.
+mixed timestamp units, a \`.zip\` with no file inside or more than one). A timestamp
+that reads as none of the accepted forms is named with its line and the forms that
+would have been accepted. Durably recorded alongside the failure itself, so it stays
+available however long after the fact you poll — not tied to how recently the failure
+happened.
 `,
       example: "line 3: column 'close' is not a number: not-a-number",
     },
@@ -3373,6 +3386,30 @@ export const AuthTokenResponseSchema = {
         "Subscription tier this token was issued for. Drives rate limits and feature flags on downstream endpoints.",
       example: "free",
     },
+    key_exp: {
+      type: "integer",
+      format: "int64",
+      description: `When the API key this token was issued for stops working, in seconds since epoch, like the
+\`exp\` of the token. Absent when the key never expires. This is the key's expiry, not the
+token's (\`expires_in\` is the token's). Create a new key in the web app before it.
+`,
+      example: 1796465100,
+    },
+  },
+} as const;
+
+export const AuthTokenRejectedSchema = {
+  type: "object",
+  required: ["error"],
+  description: `Answer of \`POST /auth/token\` (\`401\`) when the API key is missing, unknown, revoked or expired.
+One value for all four: the route does not tell them apart.
+`,
+  properties: {
+    error: {
+      type: "string",
+      enum: ["invalid_credentials"],
+      description: "Machine-readable reason.",
+    },
   },
 } as const;
 
@@ -3380,16 +3417,17 @@ export const AuthTokenErrorSchema = {
   type: "object",
   required: ["code", "message"],
   description:
-    "Error envelope returned by `POST /auth/token` when the API key is rejected (`401`) or carries no scopes where scopes are required (`403`).",
+    "Error envelope returned by `POST /auth/token` (`403`) when the API key carries no scopes and scopes are required.",
   properties: {
+    error: {
+      type: "string",
+      enum: ["apikey_without_scopes"],
+      description:
+        "The same value as `code`; the field the other answers of this route carry.",
+    },
     code: {
       type: "string",
-      enum: [
-        "invalid_apikey",
-        "apikey_revoked",
-        "apikey_expired",
-        "apikey_without_scopes",
-      ],
+      enum: ["apikey_without_scopes"],
       description: "Machine-readable error reason.",
     },
     message: {
@@ -3403,7 +3441,7 @@ export const LiveSourceSchema = {
   type: "object",
   required: ["venueType", "exchange", "segment", "type", "instruments"],
   description:
-    "One market feed a live run consumes. Exactly one entry per run today.",
+    "One market-data source a live run reads. A run starts with one, or none, and more can be attached afterwards on the same market feed (see `attachments`).",
   properties: {
     venueType: {
       type: "string",
@@ -3446,7 +3484,7 @@ export const LiveSourceRequestSchema = {
   type: "object",
   required: ["venueType", "exchange", "segment", "type"],
   description:
-    "One market feed to start a live run on. Exactly one entry per run today. It is `LiveSource` as you ask for it: the only difference is that `instruments` can be left out.",
+    "One market-data source to start a live run on, or to attach to one. It is `LiveSource` as you ask for it: the only difference is that `instruments` can be left out.",
   properties: {
     venueType: {
       type: "string",
@@ -3484,14 +3522,107 @@ export const LiveSourceRequestSchema = {
   },
 } as const;
 
+export const AttachLiveSourceRequestSchema = {
+  type: "object",
+  required: ["source"],
+  additionalProperties: false,
+  properties: {
+    source: {
+      $ref: "#/components/schemas/LiveSourceRequest",
+    },
+    warmFrom: {
+      type: "integer",
+      minimum: 0,
+      maximum: 3600,
+      description:
+        'Seconds of the feed before the attachment that the strategy sees first, for this source only. Left out, the same default as at start. See "Warming up" in the Live execution guide.',
+    },
+    ref: {
+      type: "string",
+      maxLength: 64,
+      description:
+        "A string of yours. Sending the same `ref` to the same run answers the attachment it already made instead of making another one.",
+    },
+  },
+} as const;
+
+export const LiveAttachmentAcceptedSchema = {
+  type: "object",
+  required: ["attachmentId", "state"],
+  properties: {
+    attachmentId: {
+      type: "string",
+    },
+    state: {
+      type: "string",
+      enum: ["ATTACHING", "ATTACHED", "DETACHING", "DETACHED", "REFUSED"],
+      description:
+        "The attachment's state when the request was answered. See `LiveAttachment`.",
+    },
+    effectiveAtMs: {
+      type: "integer",
+      format: "int64",
+      description:
+        "Epoch milliseconds, the moment every execution behind the run applies the change at the same market position. Absent when the run was waiting and the change is its start.",
+    },
+  },
+} as const;
+
+export const LiveAttachmentSchema = {
+  type: "object",
+  required: ["attachmentId", "source", "state", "createdAtMs"],
+  description: "One market-data source attached to a live run.",
+  properties: {
+    attachmentId: {
+      type: "string",
+    },
+    source: {
+      $ref: "#/components/schemas/LiveSource",
+    },
+    warmFrom: {
+      type: "integer",
+      description: "The seconds of warm-up in effect for this source.",
+    },
+    ref: {
+      type: "string",
+      description: "The `ref` it was attached with, when there was one.",
+    },
+    state: {
+      type: "string",
+      description: `\`ATTACHING\` (accepted; it takes effect at \`effectiveAtMs\`), \`ATTACHED\` (the run is reading it), \`DETACHING\` (a detach is accepted), \`DETACHED\` (the run no longer reads it) or \`REFUSED\` (the platform could not follow it; the run stays as it was). The set may grow: read an unknown value as a source in transition.`,
+    },
+    reason: {
+      type: "string",
+      description:
+        "Why it is `DETACHED` or `REFUSED`, when there is something to say: `OWNER` (you detached it), `REFUSED` (the platform refused it), `POOL_GONE` (a `dex` pool stopped being followed), `CAPACITY` (the platform has no room to follow it) or `NO_DATA` (an instrument of a centralized exchange that the platform does not capture sent nothing for five minutes). The set may grow.",
+    },
+    message: {
+      type: "string",
+      description:
+        "A sentence saying more about a `REFUSED` attachment. Do not parse it.",
+    },
+    createdAtMs: {
+      type: "integer",
+      format: "int64",
+    },
+    effectiveAtMs: {
+      type: "integer",
+      format: "int64",
+      description:
+        "Epoch milliseconds, when the last change to this attachment takes effect.",
+    },
+  },
+} as const;
+
 export const StartLiveRequestSchema = {
   type: "object",
-  required: ["sources"],
   properties: {
     sources: {
       type: "array",
-      minItems: 1,
+      minItems: 0,
       maxItems: 1,
+      description:
+        "One source to start on, or none (left out, or `[]`): the run then waits, with `state` `WAITING`, until you attach one with `POST /live/{runId}/attachments`.",
       items: {
         $ref: "#/components/schemas/LiveSourceRequest",
       },
@@ -3742,7 +3873,7 @@ export const LiveRunSchema = {
     state: {
       type: "string",
       description:
-        "The run's health right now: `STARTING` (no runner has reported on it yet), `RUNNING`, `LAGGING` (behind the market data, usually while catching up; clears by itself), `HUNG` (stuck inside one strategy call for longer than allowed; clears when it returns), `DEGRADED` (its independent executions produced different signals), `FAILED` (refused, could not start or failed while running; `reason` says why) or `STOPPED`. `LAGGING`, `HUNG` and `DEGRADED` come and go on a running run. The set may grow: read an unknown value as a running run with something to look at. See the Live execution guide.",
+        "The run's health right now: `STARTING` (no runner has reported on it yet), `WAITING` (running with no market-data source attached: it holds no place on the platform until you attach one), `RUNNING`, `LAGGING` (behind the market data, usually while catching up; clears by itself), `HUNG` (stuck inside one strategy call for longer than allowed; clears when it returns), `DEGRADED` (its independent executions produced different signals), `FAILED` (refused, could not start or failed while running; `reason` says why) or `STOPPED`. `LAGGING`, `HUNG` and `DEGRADED` come and go on a running run. The set may grow: read an unknown value as a running run with something to look at. See the Live execution guide.",
     },
     desired: {
       type: "string",
@@ -3772,6 +3903,16 @@ is stopped by the platform itself (\`desired: STOPPED\`), so it holds no place.
       items: {
         $ref: "#/components/schemas/LiveSource",
       },
+      description:
+        "The sources the run is reading, those of its attachments that are `ATTACHING` or `ATTACHED`. Empty while it waits.",
+    },
+    attachments: {
+      type: "array",
+      items: {
+        $ref: "#/components/schemas/LiveAttachment",
+      },
+      description:
+        'The market-data sources attached to the run, with their state. See the "Attaching and detaching a source" section of the Live execution guide.',
     },
     params: {
       type: "object",
@@ -4053,7 +4194,7 @@ export const LiveRunSummarySchema = {
     state: {
       type: "string",
       description:
-        "The run's health right now: `STARTING` (no runner has reported on it yet), `RUNNING`, `LAGGING` (behind the market data, usually while catching up; clears by itself), `HUNG` (stuck inside one strategy call for longer than allowed; clears when it returns), `DEGRADED` (its independent executions produced different signals), `FAILED` (refused, could not start or failed while running; `reason` says why) or `STOPPED`. `LAGGING`, `HUNG` and `DEGRADED` come and go on a running run. The set may grow: read an unknown value as a running run with something to look at. See the Live execution guide.",
+        "The run's health right now: `STARTING` (no runner has reported on it yet), `WAITING` (running with no market-data source attached: it holds no place on the platform until you attach one), `RUNNING`, `LAGGING` (behind the market data, usually while catching up; clears by itself), `HUNG` (stuck inside one strategy call for longer than allowed; clears when it returns), `DEGRADED` (its independent executions produced different signals), `FAILED` (refused, could not start or failed while running; `reason` says why) or `STOPPED`. `LAGGING`, `HUNG` and `DEGRADED` come and go on a running run. The set may grow: read an unknown value as a running run with something to look at. See the Live execution guide.",
     },
     desired: {
       type: "string",

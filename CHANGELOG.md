@@ -1,5 +1,12 @@
 # @qtsurfer/api-client
 
+## 0.31.0
+
+### Minor Changes
+
+- Regenerate for OpenAPI 0.128.57. API tokens expose an API key's optional `key_exp` and account responses include `apiKeyExpiresAt`. Starting a live run may omit its source; new attach and detach operations manage sources while a run remains active. CSV timestamp descriptions now specify date-only and zone-less UTC forms.
+- The `/auth/token` `401` now uses `AuthTokenRejected` with `error: 'invalid_credentials'` for missing, unknown, revoked, or expired keys; the response does not distinguish those causes.
+
 ## 0.30.0
 
 ### Minor Changes

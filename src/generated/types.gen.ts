@@ -298,6 +298,15 @@ export type Account = {
   tier: string;
   scopes: KeyScopes;
   /**
+   * When the API key behind this token stops working, UTC. Always in the answer; `null` when
+   * no key expiry applies: a key that never expires, a token issued before this field existed
+   * (ask for a new one), or a credential that is not an API key. It is the same moment as the
+   * `key_exp` of `POST /auth/token`. Rotate the key before it: after it, `POST /auth/token`
+   * answers `401`. A token already issued keeps working until its own expiry.
+   *
+   */
+  apiKeyExpiresAt?: string | null;
+  /**
    * Maximum number of strategy executions (and sweeps) you can have running at the same time
    * through the API. Starting one past this number is answered with `429`, whose message
    * carries the same number. The value already includes any API allowance your plan has.
@@ -1837,9 +1846,11 @@ export type DatasetUploadState = {
   jobId?: string;
   /**
    * A human-readable reason, present when `status` is `failed` (e.g. bad CSV contract,
-   * mixed timestamp units, a `.zip` with no file inside or more than one). Durably
-   * recorded alongside the failure itself, so it stays available however long after the
-   * fact you poll — not tied to how recently the failure happened.
+   * mixed timestamp units, a `.zip` with no file inside or more than one). A timestamp
+   * that reads as none of the accepted forms is named with its line and the forms that
+   * would have been accepted. Durably recorded alongside the failure itself, so it stays
+   * available however long after the fact you poll — not tied to how recently the failure
+   * happened.
    *
    */
   error?: string;
@@ -2115,20 +2126,39 @@ export type AuthTokenResponse = {
    * Subscription tier this token was issued for. Drives rate limits and feature flags on downstream endpoints.
    */
   tier: "free" | "basic" | "pro" | "elite";
+  /**
+   * When the API key this token was issued for stops working, in seconds since epoch, like the
+   * `exp` of the token. Absent when the key never expires. This is the key's expiry, not the
+   * token's (`expires_in` is the token's). Create a new key in the web app before it.
+   *
+   */
+  key_exp?: number;
 };
 
 /**
- * Error envelope returned by `POST /auth/token` when the API key is rejected (`401`) or carries no scopes where scopes are required (`403`).
+ * Answer of `POST /auth/token` (`401`) when the API key is missing, unknown, revoked or expired.
+ * One value for all four: the route does not tell them apart.
+ *
+ */
+export type AuthTokenRejected = {
+  /**
+   * Machine-readable reason.
+   */
+  error: "invalid_credentials";
+};
+
+/**
+ * Error envelope returned by `POST /auth/token` (`403`) when the API key carries no scopes and scopes are required.
  */
 export type AuthTokenError = {
   /**
+   * The same value as `code`; the field the other answers of this route carry.
+   */
+  error?: "apikey_without_scopes";
+  /**
    * Machine-readable error reason.
    */
-  code:
-    | "invalid_apikey"
-    | "apikey_revoked"
-    | "apikey_expired"
-    | "apikey_without_scopes";
+  code: "apikey_without_scopes";
   /**
    * Human-readable description of the failure.
    */
@@ -2136,7 +2166,7 @@ export type AuthTokenError = {
 };
 
 /**
- * One market feed a live run consumes. Exactly one entry per run today.
+ * One market-data source a live run reads. A run starts with one, or none, and more can be attached afterwards on the same market feed (see `attachments`).
  */
 export type LiveSource = {
   /**
@@ -2162,7 +2192,7 @@ export type LiveSource = {
 };
 
 /**
- * One market feed to start a live run on. Exactly one entry per run today. It is `LiveSource` as you ask for it: the only difference is that `instruments` can be left out.
+ * One market-data source to start a live run on, or to attach to one. It is `LiveSource` as you ask for it: the only difference is that `instruments` can be left out.
  */
 export type LiveSourceRequest = {
   /**
@@ -2187,8 +2217,68 @@ export type LiveSourceRequest = {
   instruments?: Array<string>;
 };
 
+export type AttachLiveSourceRequest = {
+  source: LiveSourceRequest;
+  /**
+   * Seconds of the feed before the attachment that the strategy sees first, for this source only. Left out, the same default as at start. See "Warming up" in the Live execution guide.
+   */
+  warmFrom?: number;
+  /**
+   * A string of yours. Sending the same `ref` to the same run answers the attachment it already made instead of making another one.
+   */
+  ref?: string;
+};
+
+export type LiveAttachmentAccepted = {
+  attachmentId: string;
+  /**
+   * The attachment's state when the request was answered. See `LiveAttachment`.
+   */
+  state: "ATTACHING" | "ATTACHED" | "DETACHING" | "DETACHED" | "REFUSED";
+  /**
+   * Epoch milliseconds, the moment every execution behind the run applies the change at the same market position. Absent when the run was waiting and the change is its start.
+   */
+  effectiveAtMs?: number;
+};
+
+/**
+ * One market-data source attached to a live run.
+ */
+export type LiveAttachment = {
+  attachmentId: string;
+  source: LiveSource;
+  /**
+   * The seconds of warm-up in effect for this source.
+   */
+  warmFrom?: number;
+  /**
+   * The `ref` it was attached with, when there was one.
+   */
+  ref?: string;
+  /**
+   * `ATTACHING` (accepted; it takes effect at `effectiveAtMs`), `ATTACHED` (the run is reading it), `DETACHING` (a detach is accepted), `DETACHED` (the run no longer reads it) or `REFUSED` (the platform could not follow it; the run stays as it was). The set may grow: read an unknown value as a source in transition.
+   */
+  state: string;
+  /**
+   * Why it is `DETACHED` or `REFUSED`, when there is something to say: `OWNER` (you detached it), `REFUSED` (the platform refused it), `POOL_GONE` (a `dex` pool stopped being followed), `CAPACITY` (the platform has no room to follow it) or `NO_DATA` (an instrument of a centralized exchange that the platform does not capture sent nothing for five minutes). The set may grow.
+   */
+  reason?: string;
+  /**
+   * A sentence saying more about a `REFUSED` attachment. Do not parse it.
+   */
+  message?: string;
+  createdAtMs: number;
+  /**
+   * Epoch milliseconds, when the last change to this attachment takes effect.
+   */
+  effectiveAtMs?: number;
+};
+
 export type StartLiveRequest = {
-  sources: [LiveSourceRequest];
+  /**
+   * One source to start on, or none (left out, or `[]`): the run then waits, with `state` `WAITING`, until you attach one with `POST /live/{runId}/attachments`.
+   */
+  sources?: Array<LiveSourceRequest>;
   /**
    * Strategy parameters to start with. Opaque key/value pairs — see this strategy's own `declaredProperties` (from `POST /strategy`) for the keys it accepts.
    */
@@ -2345,7 +2435,7 @@ export type LiveRun = {
    */
   stage: "SANDBOX" | "LIVE";
   /**
-   * The run's health right now: `STARTING` (no runner has reported on it yet), `RUNNING`, `LAGGING` (behind the market data, usually while catching up; clears by itself), `HUNG` (stuck inside one strategy call for longer than allowed; clears when it returns), `DEGRADED` (its independent executions produced different signals), `FAILED` (refused, could not start or failed while running; `reason` says why) or `STOPPED`. `LAGGING`, `HUNG` and `DEGRADED` come and go on a running run. The set may grow: read an unknown value as a running run with something to look at. See the Live execution guide.
+   * The run's health right now: `STARTING` (no runner has reported on it yet), `WAITING` (running with no market-data source attached: it holds no place on the platform until you attach one), `RUNNING`, `LAGGING` (behind the market data, usually while catching up; clears by itself), `HUNG` (stuck inside one strategy call for longer than allowed; clears when it returns), `DEGRADED` (its independent executions produced different signals), `FAILED` (refused, could not start or failed while running; `reason` says why) or `STOPPED`. `LAGGING`, `HUNG` and `DEGRADED` come and go on a running run. The set may grow: read an unknown value as a running run with something to look at. See the Live execution guide.
    */
   state: string;
   /**
@@ -2369,7 +2459,14 @@ export type LiveRun = {
    *
    */
   reason?: string;
+  /**
+   * The sources the run is reading, those of its attachments that are `ATTACHING` or `ATTACHED`. Empty while it waits.
+   */
   sources: Array<LiveSource>;
+  /**
+   * The market-data sources attached to the run, with their state. See the "Attaching and detaching a source" section of the Live execution guide.
+   */
+  attachments?: Array<LiveAttachment>;
   params: {
     [key: string]: unknown;
   };
@@ -2537,7 +2634,7 @@ export type LiveRunSummary = {
    */
   stage: "SANDBOX" | "LIVE";
   /**
-   * The run's health right now: `STARTING` (no runner has reported on it yet), `RUNNING`, `LAGGING` (behind the market data, usually while catching up; clears by itself), `HUNG` (stuck inside one strategy call for longer than allowed; clears when it returns), `DEGRADED` (its independent executions produced different signals), `FAILED` (refused, could not start or failed while running; `reason` says why) or `STOPPED`. `LAGGING`, `HUNG` and `DEGRADED` come and go on a running run. The set may grow: read an unknown value as a running run with something to look at. See the Live execution guide.
+   * The run's health right now: `STARTING` (no runner has reported on it yet), `WAITING` (running with no market-data source attached: it holds no place on the platform until you attach one), `RUNNING`, `LAGGING` (behind the market data, usually while catching up; clears by itself), `HUNG` (stuck inside one strategy call for longer than allowed; clears when it returns), `DEGRADED` (its independent executions produced different signals), `FAILED` (refused, could not start or failed while running; `reason` says why) or `STOPPED`. `LAGGING`, `HUNG` and `DEGRADED` come and go on a running run. The set may grow: read an unknown value as a running run with something to look at. See the Live execution guide.
    */
   state: string;
   /**
@@ -2942,9 +3039,13 @@ export type AuthenticateData = {
 
 export type AuthenticateErrors = {
   /**
-   * API key is invalid, revoked, or expired.
+   * The API key is missing, unknown, revoked or expired. The answer is the same for all four:
+   * it does not say which, so a key that used to work and now gets this one has most likely
+   * lapsed or been revoked. Read `key_exp` (or `apiKeyExpiresAt` on `GET /account`) ahead of
+   * time to know when.
+   *
    */
-  401: AuthTokenError;
+  401: AuthTokenRejected;
   /**
    * The API key is valid but carries no scopes, and this deployment requires them.
    */
@@ -4752,7 +4853,7 @@ export type StartLiveData = {
 
 export type StartLiveErrors = {
   /**
-   * Malformed `sources` (not exactly one entry, missing field, unsupported `type`), a `venueType`, `exchange` and `segment` that `GET /exchanges` does not list together, or a segment with no live data (the message names what it lists), a `type` the strategy cannot consume (a ticker strategy with a `kline` source, or the reverse; the message names both), an invalid `visibility`, an invalid `paper` block (an unknown field, a wrong type or an out-of-range value), or no `paper` block for a strategy that listens to its own execution events. A `relay` or `stream` that is not `true` or `false`, or a `stream` where streams are not available yet. A `warmFrom` that is not an integer from 0 to 3600. A `sandboxMinutes` that is not an integer from 5 to 1440. An `instruments` that is empty or `null`.
+   * Malformed `sources` (more than one entry, missing field, unsupported `type`), a `venueType`, `exchange` and `segment` that `GET /exchanges` does not list together, or a segment with no live data (the message names what it lists), a `type` the strategy cannot consume (a ticker strategy with a `kline` source, or the reverse; the message names both), an invalid `visibility`, an invalid `paper` block (an unknown field, a wrong type or an out-of-range value), or no `paper` block for a strategy that listens to its own execution events. A `relay` or `stream` that is not `true` or `false`, or a `stream` where streams are not available yet. A `warmFrom` that is not an integer from 0 to 3600. A `sandboxMinutes` that is not an integer from 5 to 1440. An `instruments` that is empty or `null`.
    */
   400: ResponseError;
   /**
@@ -4789,7 +4890,8 @@ export type StartLiveErrors = {
   409: ResponseError;
   /**
    * One of two kinds. **A limit of your plan** is reached: more runs than your concurrent-run limit, more
-   * instruments in a list than your plan allows, or a `sandboxMinutes` shorter than the trial your plan gives.
+   * instruments in a list than your plan allows, more runs waiting for a source than your plan keeps, or a
+   * `sandboxMinutes` shorter than the trial your plan gives.
    * The message names your plan, and retrying will not help until something changes, so there is no
    * `Retry-After`. Or **the platform is at capacity** right now: a `Retry-After` header says when to try again.
    *
@@ -5038,7 +5140,7 @@ export type SendLiveCommandErrors = {
    */
   404: ResponseError;
   /**
-   * One of three reasons, each its own message: the run is not running, so there is nothing to tell;
+   * One of four reasons, each its own message: the run is not running, so there is nothing to tell; the run has no market-data source attached, so there is nothing to deliver the command to (attach one with `POST /live/{runId}/attachments`);
    * this run's compiled strategy has no record of whether it handles commands — register the strategy
    * again with `POST /strategy` and start a new run, since a run keeps the compiled version it started
    * with; or the strategy does not implement `CommandRequestHandler` at all.
@@ -5067,6 +5169,101 @@ export type SendLiveCommandResponses = {
 
 export type SendLiveCommandResponse =
   SendLiveCommandResponses[keyof SendLiveCommandResponses];
+
+export type AttachLiveSourceData = {
+  body: AttachLiveSourceRequest;
+  path: {
+    runId: string;
+  };
+  query?: never;
+  url: "/live/{runId}/attachments";
+};
+
+export type AttachLiveSourceErrors = {
+  /**
+   * No `source`, a `warmFrom` outside `0` to `3600`, a `ref` longer than 64 characters, or a source a start would refuse, with the same messages (a malformed one, a type the strategy cannot consume, a segment with no live data).
+   */
+  400: ResponseError;
+  /**
+   * A wildcard instrument on a plan that does not include it.
+   */
+  402: ResponseError;
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
+   * No such run, or you do not own it.
+   */
+  404: ResponseError;
+  /**
+   * The run is not running, or the source is on another market feed than the ones already attached.
+   */
+  409: ResponseError;
+  /**
+   * An instrument that the strategy's recorded selection leaves out (a QTScript `instruments` line).
+   */
+  422: ResponseError;
+  /**
+   * A limit of your plan, which the message names with its number: the instruments a run may read (counted over all its attachments) or the `dex` pools you may follow at once across your runs; or the platform has no room.
+   */
+  429: ResponseError;
+};
+
+export type AttachLiveSourceError =
+  AttachLiveSourceErrors[keyof AttachLiveSourceErrors];
+
+export type AttachLiveSourceResponses = {
+  /**
+   * Accepted. If the same `ref` was sent before to this run, or the run already has that source, the attachment it made, unchanged.
+   */
+  202: LiveAttachmentAccepted;
+};
+
+export type AttachLiveSourceResponse =
+  AttachLiveSourceResponses[keyof AttachLiveSourceResponses];
+
+export type DetachLiveSourceData = {
+  body?: never;
+  path: {
+    runId: string;
+    attachmentId: string;
+  };
+  query?: never;
+  url: "/live/{runId}/attachments/{attachmentId}";
+};
+
+export type DetachLiveSourceErrors = {
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
+   * No such run or attachment, or you do not own the run.
+   */
+  404: ResponseError;
+};
+
+export type DetachLiveSourceError =
+  DetachLiveSourceErrors[keyof DetachLiveSourceErrors];
+
+export type DetachLiveSourceResponses = {
+  /**
+   * Accepted. The attachment is `DETACHING`, or already `DETACHED`.
+   */
+  202: LiveAttachmentAccepted;
+};
+
+export type DetachLiveSourceResponse =
+  DetachLiveSourceResponses[keyof DetachLiveSourceResponses];
 
 export type RevokeLiveStreamData = {
   body?: never;

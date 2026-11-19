@@ -74,7 +74,11 @@ const { access_token: jwt } = data;  // feed to client.setConfig() for the rest
 console.log(data.scopes); // e.g. { exchanges: ['read'], backtests: ['read', 'execute'] }
 ```
 
-An invalid, revoked, or expired key returns `401`. Where a deployment requires scopes, a key
+An invalid, missing, unknown, revoked, or expired key returns `401` with `error: 'invalid_credentials'`. If the key
+has an expiry, `data.key_exp` reports it in seconds since epoch; the same expiry appears as
+`apiKeyExpiresAt` on `getAccount()`. A key that never expires has no `key_exp`. This is the key's
+expiry, not the JWT's `expires_in`, so a token issued just before key expiry remains valid for its
+own remaining lifetime. Rotate the API key before `key_exp`. Where a deployment requires scopes, a key
 with none returns `403` with `AuthTokenError.code === 'apikey_without_scopes'`, and no token is
 minted. Create a key with at least one resource/action scope in the web app; retrying the same
 scope-less key does not fix the rejection. Read the code from `error` and the status from `response`.
@@ -88,14 +92,14 @@ pluggable token stores so callers don't reinvent that plumbing.
 
 All operations are exported as standalone functions; every operation accepts an `Options` object and returns `{ data, error, response }`.
 
-The table is exhaustive: `src/generated/` is produced from the OpenAPI spec, so **all 48 operations**
-the spec declares are exported. The rows below describe **spec version 0.128.54**, which is versioned
+The table is exhaustive: `src/generated/` is produced from the OpenAPI spec, so **all 50 operations**
+the spec declares are exported. The rows below describe **spec version 0.128.57**, which is versioned
 independently of this package.
 
 | Function | Method | Path | Purpose |
 | -------- | ------ | ---- | ------- |
-| `authenticate` | POST | `/auth/token` | Exchange an API key for a short-lived JWT |
-| `getAccount` | GET | `/account` | Read the authenticated account tier and limits, including the full-grid sweep limit |
+| `authenticate` | POST | `/auth/token` | Exchange an API key for a short-lived JWT; an expiring key's `key_exp` is included |
+| `getAccount` | GET | `/account` | Read the authenticated account tier and limits, including the full-grid sweep limit and `apiKeyExpiresAt` |
 | `getAccountUsage` | GET | `/account/usage` | Read current resource and storage use |
 | `listExchanges` | GET | `/exchanges` | List the available exchanges |
 | `listInstruments` | GET | `/exchange/{exchangeId}/instruments` | List CEX instruments or DEX pools in the default segment |
@@ -127,7 +131,7 @@ independently of this package.
 | `getDatasetUpload` | GET | `/datasets/{datasetId}/uploads/{uploadId}` | Get an upload's ingestion state |
 | `importDataset` | POST | `/datasets/imports` | Import CEX market history or DEX pool history at a plan-allowed cadence; the `202` reports its cadence when known and plan refusals are typed `402` |
 | `getDatasetImport` | GET | `/datasets/{datasetId}/imports/{importId}` | Get an import's fetch and ingestion state |
-| `startLive` | POST | `/strategy/{strategyId}/live` | Start a compiled strategy on a live feed; request a sandbox run with `sandbox: true`, set its warm-up replay window with `warmFrom`, simulate fills and equity with `paper`, or request a plain WebSocket stream URL; HTTP `409` can require re-registering a strategy compiled for an older platform version |
+| `startLive` | POST | `/strategy/{strategyId}/live` | Start a compiled strategy with one source or no source (the run waits); request a sandbox with `sandbox: true`, set warm-up with `warmFrom`, configure simulated fills with `paper`, or request a plain WebSocket stream URL |
 | `getLive` | GET | `/strategy/{strategyId}/live` | Read a strategy's current or most recent live run |
 | `stopLive` | DELETE | `/strategy/{strategyId}/live` | Request a strategy's active live run to stop |
 | `listLive` | GET | `/live` | Page all live runs owned by the authenticated account |
@@ -138,12 +142,18 @@ independently of this package.
 | `rotateLiveStream` | POST | `/live/{runId}/stream` | Replace a run's stream URL and retire the old one |
 | `revokeLiveStream` | DELETE | `/live/{runId}/stream` | Permanently revoke a run's stream URL |
 | `sendLiveCommand` | POST | `/live/{runId}/commands` | Send a command to a running strategy without restarting it |
+| `attachLiveSource` | POST | `/live/{runId}/attachments` | Attach a market-data source to a waiting or running live run |
+| `detachLiveSource` | DELETE | `/live/{runId}/attachments/{attachmentId}` | Detach a source without stopping the live run |
 | `getLiveRunSignals` | GET | `/live/{runId}/signals` | Page retained signals by time, instrument, or signal type (`paper` items only when output is `mix`) |
 | `getLiveRunPaper` | GET | `/live/{runId}/paper` | Read simulated accounts, open positions, equity, and KPIs for a paper-trading run |
 | `getLiveRunPaperEquity` | GET | `/live/{runId}/paper/equity` | Read a paper account equity or instrument PnL curve with shaping and paging options |
 | `mintLiveConnectionToken` | POST | `/live/token` | Mint a short-lived Centrifugo connection token |
 
-All generated types (`Exchange`, `InstrumentDetail`, `BacktestJobResult`, `PrepareJobState`, `ResultMap`, `InsufficientScopeError`, `LiveRunStats`, `LiveRunDetail`, `LiveRunWithStream`, `LiveStreamUrl`, `LiveStreamRevoked`, `LivePaper`, `LivePaperAccount`, `LivePaperEquityCurve`, `SendLiveCommandRequest`, `LiveCommandResult`, etc.) are re-exported from the root.
+All generated types (`Exchange`, `InstrumentDetail`, `BacktestJobResult`, `PrepareJobState`, `ResultMap`, `AuthTokenRejected`, `LiveRunStats`, `LiveRunDetail`, `LiveAttachment`, `LiveAttachmentAccepted`, `AttachLiveSourceRequest`, `LiveRunWithStream`, `LiveStreamUrl`, `LiveStreamRevoked`, `LivePaper`, `LivePaperAccount`, `LivePaperEquityCurve`, `SendLiveCommandRequest`, `LiveCommandResult`, etc.) are re-exported from the root.
+
+CSV and Parquet dataset uploads accept a timestamp column with ISO date or date-time text, or numeric
+epoch seconds, milliseconds, or microseconds. A date alone and a date-time without a zone are UTC;
+an explicit offset is honored. Ambiguous day-first and month-first dates are not accepted.
 
 ### Venue discovery, history, and scopes
 
