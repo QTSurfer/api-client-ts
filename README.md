@@ -92,8 +92,8 @@ pluggable token stores so callers don't reinvent that plumbing.
 
 All operations are exported as standalone functions; every operation accepts an `Options` object and returns `{ data, error, response }`.
 
-The table is exhaustive: `src/generated/` is produced from the OpenAPI spec, so **all 50 operations**
-the spec declares are exported. The rows below describe **spec version 0.128.57**, which is versioned
+The table is exhaustive: `src/generated/` is produced from the OpenAPI spec, so **all 78 operations**
+the spec declares are exported. The rows below describe **spec version 0.128.70**, which is versioned
 independently of this package.
 
 | Function | Method | Path | Purpose |
@@ -122,7 +122,7 @@ independently of this package.
 | `executeBacktest` | POST | `/backtest/{exchangeId}/{type}/execute` | Execute a compiled strategy against a prepared dataset; HTTP `409` can require re-registering a strategy compiled for an older platform version |
 | `cancelBacktest` | DELETE | `/backtest/{exchangeId}/{type}/execute/{jobId}` | Cancel a running backtest execution |
 | `getBacktestResult` | GET | `/backtest/{exchangeId}/{type}/execute/{jobId}` | Get the result of a backtest execution job |
-| `listDatasets` | GET | `/datasets` | List your datasets, optionally including deleted datasets and their deletion times |
+| `listDatasets` | GET | `/datasets` | List datasets, optionally filtered by collection or including deleted datasets and their deletion times |
 | `createDataset` | POST | `/datasets` | Create a dataset and obtain its first upload session |
 | `deleteDataset` | DELETE | `/datasets/{datasetId}` | Soft-delete a dataset |
 | `getDataset` | GET | `/datasets/{datasetId}` | Get dataset metadata |
@@ -131,6 +131,12 @@ independently of this package.
 | `getDatasetUpload` | GET | `/datasets/{datasetId}/uploads/{uploadId}` | Get an upload's ingestion state |
 | `importDataset` | POST | `/datasets/imports` | Import CEX market history or DEX pool history at a plan-allowed cadence; the `202` reports its cadence when known and plan refusals are typed `402` |
 | `getDatasetImport` | GET | `/datasets/{datasetId}/imports/{importId}` | Get an import's fetch and ingestion state |
+| `moveDataset` | PATCH | `/datasets/{datasetId}` | Move a dataset into a collection, or back to the root |
+| `createCollection` | POST | `/collections` | Create a collection |
+| `listCollections` | GET | `/collections` | List your collections |
+| `getCollection` | GET | `/collections/{collectionId}` | Get a collection by id |
+| `updateCollection` | PATCH | `/collections/{collectionId}` | Rename a collection or change its description |
+| `deleteCollection` | DELETE | `/collections/{collectionId}` | Delete a collection |
 | `startLive` | POST | `/strategy/{strategyId}/live` | Start a compiled strategy with one source or no source (the run waits); request a sandbox with `sandbox: true`, set warm-up with `warmFrom`, configure simulated fills with `paper`, or request a plain WebSocket stream URL |
 | `getLive` | GET | `/strategy/{strategyId}/live` | Read a strategy's current or most recent live run |
 | `stopLive` | DELETE | `/strategy/{strategyId}/live` | Request a strategy's active live run to stop |
@@ -148,6 +154,28 @@ independently of this package.
 | `getLiveRunPaper` | GET | `/live/{runId}/paper` | Read simulated accounts, open positions, equity, and KPIs for a paper-trading run |
 | `getLiveRunPaperEquity` | GET | `/live/{runId}/paper/equity` | Read a paper account equity or instrument PnL curve with shaping and paging options |
 | `mintLiveConnectionToken` | POST | `/live/token` | Mint a short-lived Centrifugo connection token |
+| `createSignalChannel` | POST | `/signals/channels` | Create a signal channel |
+| `listSignalChannels` | GET | `/signals/channels` | List your signal channels |
+| `listPublicSignalChannels` | GET | `/signals/channels/public` | Browse public signal channels |
+| `getSignalChannel` | GET | `/signals/channels/{channelId}` | Read a signal channel |
+| `updateSignalChannel` | PATCH | `/signals/channels/{channelId}` | Change a signal channel of yours |
+| `deleteSignalChannel` | DELETE | `/signals/channels/{channelId}` | Delete a signal channel of yours |
+| `publishSignalNotice` | POST | `/signals/channels/{channelId}/notices` | Publish a notice on a channel of yours |
+| `listSignalNotices` | GET | `/signals/channels/{channelId}/notices` | List the notices of a channel of yours |
+| `createSignalOffer` | POST | `/signals/channels/{channelId}/offers` | Create an offer of a channel of yours |
+| `listSignalOffers` | GET | `/signals/channels/{channelId}/offers` | List the offers of a channel of yours |
+| `mintSignalCodes` | POST | `/signals/offers/{offerId}/codes` | Mint codes for an offer of yours |
+| `listSignalCodes` | GET | `/signals/offers/{offerId}/codes` | List the codes of an offer of yours |
+| `revokeSignalCode` | DELETE | `/signals/codes/{codeId}` | Revoke a code of yours |
+| `redeemSignalCode` | POST | `/signals/subscriptions` | Redeem a code |
+| `listSignalSubscriptions` | GET | `/signals/subscriptions` | List your subscriptions |
+| `getSignalSubscription` | GET | `/signals/subscriptions/{subscriptionId}` | Read a subscription of yours |
+| `cancelSignalSubscription` | DELETE | `/signals/subscriptions/{subscriptionId}` | Cancel a subscription of yours |
+| `renewSignalSubscription` | POST | `/signals/subscriptions/{subscriptionId}/renew` | Renew a subscription of yours with a code |
+| `feedSignalSubscriptionRun` | POST | `/signals/subscriptions/{subscriptionId}/runs` | Feed one of your runs from a subscription |
+| `stopFeedingSignalSubscriptionRun` | DELETE | `/signals/subscriptions/{subscriptionId}/runs/{runId}` | Stop feeding a run from a subscription |
+| `listSignalDeliveries` | GET | `/signals/subscriptions/{subscriptionId}/deliveries` | List what a subscription of yours received |
+| `publishSignalNoticeByHook` | POST | `/signals/hook/{hookKey}` | Publish a notice through a channel's webhook address |
 
 All generated types (`Exchange`, `InstrumentDetail`, `BacktestJobResult`, `PrepareJobState`, `ResultMap`, `AuthTokenRejected`, `LiveRunStats`, `LiveRunDetail`, `LiveAttachment`, `LiveAttachmentAccepted`, `AttachLiveSourceRequest`, `LiveRunWithStream`, `LiveStreamUrl`, `LiveStreamRevoked`, `LivePaper`, `LivePaperAccount`, `LivePaperEquityCurve`, `SendLiveCommandRequest`, `LiveCommandResult`, etc.) are re-exported from the root.
 
@@ -160,8 +188,10 @@ an explicit offset is honored. Ambiguous day-first and month-first dates are not
 `Exchange.venueType` is `cex` or `dex`; `segments` lists its catalogues and `liveSegments` the
 segments a live run can consume. Both instrument operations return `InstrumentCatalogueResponse`,
 a union of `InstrumentListResponse` and `PoolListResponse`, distinguished by `meta.venueType`.
-Pool `id` is the address used to start a DEX live run; `symbol` is its signal pair. Unknown prices,
-volumes, and pool creation dates are absent. DEX live sources require one pool address and `type: 'kline'`.
+Pool `id` is its address and `symbol` is the pair. Solana pool addresses are base58 and
+case-sensitive. Unknown prices, volumes, fee tiers, and pool creation dates are absent. A DEX
+live source uses `type: 'kline'` and one identifier: an EVM pool address or a Solana token mint,
+depending on the market. Discover supported live segments with `listExchanges()`.
 New requests use `cex`/`dex`; the server still accepts the older `cx`/`dx` spelling.
 
 `DatasetImportRequest` accepts `type: 'cex'` with a `cex` block (`exchange`, `segment: 'spot'`,

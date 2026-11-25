@@ -1,5 +1,11 @@
 # @qtsurfer/api-client
 
+## 0.32.0
+
+### Minor Changes
+
+- Generate the OpenAPI 0.128.70 contract. Organize datasets into collections, access signal channels and subscriptions, and read strategy names and languages, Solana pool listings, and import usage. Live parameter updates omit their effective time for waiting runs. DEX signals include the instrument identifier and strategy-driven detaches appear in REST signal history.
+
 ## 0.31.0
 
 ### Minor Changes

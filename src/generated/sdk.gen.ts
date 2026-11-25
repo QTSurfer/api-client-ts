@@ -88,6 +88,24 @@ import type {
   GetDatasetData,
   GetDatasetResponse,
   GetDatasetError,
+  MoveDatasetData,
+  MoveDatasetResponse,
+  MoveDatasetError,
+  ListCollectionsData,
+  ListCollectionsResponse,
+  ListCollectionsError,
+  CreateCollectionData,
+  CreateCollectionResponse,
+  CreateCollectionError,
+  DeleteCollectionData,
+  DeleteCollectionResponse,
+  DeleteCollectionError,
+  GetCollectionData,
+  GetCollectionResponse,
+  GetCollectionError,
+  UpdateCollectionData,
+  UpdateCollectionResponse,
+  UpdateCollectionError,
   OpenDatasetUploadData,
   OpenDatasetUploadResponse,
   OpenDatasetUploadError,
@@ -154,6 +172,72 @@ import type {
   MintLiveConnectionTokenData,
   MintLiveConnectionTokenResponse,
   MintLiveConnectionTokenError,
+  ListSignalChannelsData,
+  ListSignalChannelsResponse,
+  ListSignalChannelsError,
+  CreateSignalChannelData,
+  CreateSignalChannelResponse,
+  CreateSignalChannelError,
+  ListPublicSignalChannelsData,
+  ListPublicSignalChannelsResponse,
+  ListPublicSignalChannelsError,
+  DeleteSignalChannelData,
+  DeleteSignalChannelResponse,
+  DeleteSignalChannelError,
+  GetSignalChannelData,
+  GetSignalChannelResponse,
+  GetSignalChannelError,
+  UpdateSignalChannelData,
+  UpdateSignalChannelResponse,
+  UpdateSignalChannelError,
+  ListSignalNoticesData,
+  ListSignalNoticesResponse,
+  ListSignalNoticesError,
+  PublishSignalNoticeData,
+  PublishSignalNoticeResponse,
+  PublishSignalNoticeError,
+  ListSignalOffersData,
+  ListSignalOffersResponse,
+  ListSignalOffersError,
+  CreateSignalOfferData,
+  CreateSignalOfferResponse,
+  CreateSignalOfferError,
+  ListSignalCodesData,
+  ListSignalCodesResponse,
+  ListSignalCodesError,
+  MintSignalCodesData,
+  MintSignalCodesResponse,
+  MintSignalCodesError,
+  RevokeSignalCodeData,
+  RevokeSignalCodeResponse,
+  RevokeSignalCodeError,
+  ListSignalSubscriptionsData,
+  ListSignalSubscriptionsResponse,
+  ListSignalSubscriptionsError,
+  RedeemSignalCodeData,
+  RedeemSignalCodeResponse,
+  RedeemSignalCodeError,
+  CancelSignalSubscriptionData,
+  CancelSignalSubscriptionResponse,
+  CancelSignalSubscriptionError,
+  GetSignalSubscriptionData,
+  GetSignalSubscriptionResponse,
+  GetSignalSubscriptionError,
+  RenewSignalSubscriptionData,
+  RenewSignalSubscriptionResponse,
+  RenewSignalSubscriptionError,
+  FeedSignalSubscriptionRunData,
+  FeedSignalSubscriptionRunResponse,
+  FeedSignalSubscriptionRunError,
+  StopFeedingSignalSubscriptionRunData,
+  StopFeedingSignalSubscriptionRunResponse,
+  StopFeedingSignalSubscriptionRunError,
+  ListSignalDeliveriesData,
+  ListSignalDeliveriesResponse,
+  ListSignalDeliveriesError,
+  PublishSignalNoticeByHookData,
+  PublishSignalNoticeByHookResponse,
+  PublishSignalNoticeByHookError,
 } from "./types.gen";
 import { client as _heyApiClient } from "./client.gen";
 
@@ -192,7 +276,7 @@ export type Options<
  * key's expiry, not the token's: a token issued just before the key lapses keeps working
  * until its own `expires_in` is over.
  *
- * The answer's `scopes` say what the key may do. Where a deployment requires scopes, a key
+ * The answer's `scopes` say what the key may do. A key
  * that carries none is refused with `403` and the code `apikey_without_scopes`: create a key
  * with at least one scope.
  *
@@ -307,7 +391,7 @@ export const listExchanges = <ThrowOnError extends boolean = false>(
  *
  * For a decentralized exchange (`venueType` `dex` in `GET /exchanges`) the instruments are its pools,
  * each a `PoolDetail`, and the default segment is the first one the exchange lists (`uniswap-v3` for
- * `robinhood`).
+ * `robinhood`, `orca` for `solana`).
  *
  */
 export const listInstruments = <ThrowOnError extends boolean = false>(
@@ -330,10 +414,15 @@ export const listInstruments = <ThrowOnError extends boolean = false>(
  * `spot` / `futures` segment-discovery links; the default-segment shortcut is
  * `GET /exchange/{exchangeId}/instruments` (spot).
  *
- * For a decentralized exchange the segments are its protocols (`uniswap-v3` for `robinhood`) and the
- * instruments are its pools, each a `PoolDetail`: the 50 with most volume in the last 24 hours among
- * those with at least 10,000 US dollars of liquidity, refreshed every hour. The list is a place to
- * start, not the whole market: a live run can read any pool of the protocol, listed or not.
+ * For a decentralized exchange the segments are its protocols (`uniswap-v3` for `robinhood`; `orca`,
+ * `raydium`, `raydium-clmm`, `meteora`, `pumpswap` and `pumpfun` for `solana`) and the instruments are its pools,
+ * each a `PoolDetail`: the ones with most volume in the last 24 hours among those with enough liquidity
+ * (`meta.limit` is the most the listing holds and `meta.minTvlUsd` the least liquidity a listed pool has),
+ * refreshed periodically (`meta.updatedAt`). The list is a
+ * place to start, not the whole market: a live run can read any pool of the protocol, listed or not. The
+ * pools of `solana` are for importing as datasets and for backtesting; a live run reads a `solana` segment
+ * only when `GET /exchanges` lists it in `liveSegments`. The segment `pumpfun` follows a token by its mint, so
+ * it has no listing: this request answers `404` for it.
  *
  */
 export const listSegmentInstruments = <ThrowOnError extends boolean = false>(
@@ -359,11 +448,10 @@ export const listSegmentInstruments = <ThrowOnError extends boolean = false>(
  * One segment = one hour, aligned to UTC. The `hour` query parameter selects
  * the segment and must match `YYYY-MM-DDTHH` (no minutes/seconds, no timezone
  * suffix). Example: `hour=2026-10-15T10` is the segment `h10.lastra` of
- * 2026-10-15, covering `[10:00:00Z, 11:00:00Z)`. The hour has to be one of the last 7 days (see
+ * 2026-10-15, covering `[10:00:00Z, 11:00:00Z)`. The hour has to be a recent one (see
  * below): read the example as the shape of the value.
  *
- * **Which hours.** The last 7 days: an hour that started no more than 7 days before the
- * request and has ended. This route gives one hour of one instrument, fast; it is not how to
+ * **Which hours.** Recent hours only: an hour that has ended and is not too old. This route gives one hour of one instrument, fast; it is not how to
  * get older history or a range. An older hour is `400` with `reason: OUTSIDE_WINDOW`, and the
  * error carries `next`, the `POST /datasets/imports` request that imports exactly that hour
  * as a dataset (add a `name`); a longer span is imported the same way, within your plan's
@@ -372,7 +460,7 @@ export const listSegmentInstruments = <ThrowOnError extends boolean = false>(
  * **The hour in progress and the last hours.** The hour in progress, and an hour that has ended
  * but is not stored yet, can be answered with what has been received so far, marked provisional:
  * `200` with `X-Data-Status: provisional` and `X-Data-Through`, the instant of the last row.
- * Not every deployment of the service gives provisional answers: where it does not, those hours
+ * The service does not always give provisional answers: when it does not, those hours
  * are `404` with `reason: NOT_YET_AVAILABLE` and a `Retry-After`, and a client that needs them
  * handles both. A provisional answer is not to keep: it can still grow, and the stored hour
  * replaces it once there is one. It takes seconds to build, longer the further the hour has gone,
@@ -429,7 +517,7 @@ export const downloadTickers = <ThrowOnError extends boolean = false>(
  * format read the other with the same code. Use this endpoint when a
  * per-tick payload would be too large for the window of interest.
  *
- * The hours served (the last 7 days; the hour in progress and the last hours may be provisional), the timestamps
+ * The hours served (recent hours only; the hour in progress and the last hours may be provisional), the timestamps
  * (`ts` in microseconds, `X-Ts-Unit: micros`) and the errors are those of the tickers route.
  *
  */
@@ -1088,6 +1176,10 @@ export const getBacktestResult = <ThrowOnError extends boolean = false>(
  * `deletedAt` it was deleted at — useful to keep a copy of your list in sync, telling a
  * deleted dataset apart from one that never existed.
  *
+ * Datasets created at the same instant keep the same order from one call to the next, and so
+ * do the datasets of a collection: a listing narrowed with `collectionId` is that order,
+ * filtered.
+ *
  */
 export const listDatasets = <ThrowOnError extends boolean = false>(
   options?: Options<ListDatasetsData, ThrowOnError>
@@ -1137,7 +1229,7 @@ export const listDatasets = <ThrowOnError extends boolean = false>(
  * discovered from the data, not declared, for all three.
  *
  * A CSV upload is converted to our native columnar format (`lastra`) for storage. A parquet
- * or lastra upload is stored as-is today. Either way, always check `dataFormat` on
+ * or lastra upload is stored as it is. Either way, always check `dataFormat` on
  * `GET /datasets/{datasetId}` and `GET /datasets/{datasetId}/uploads/{uploadId}` for which
  * one `dataUrl` actually is, rather than assuming from how you uploaded it (a converted CSV
  * and an uploaded lastra file both report `dataFormat: "lastra"`).
@@ -1175,8 +1267,8 @@ export const createDataset = <ThrowOnError extends boolean = false>(
 /**
  * Delete a dataset
  * Soft-delete — the dataset stops appearing in `GET /datasets`/`GET /datasets/{datasetId}` and
- * can no longer be prepared from, but its object data is reclaimed later rather than purged
- * inline, so a backtest already running against one of its versions is not disrupted.
+ * can no longer be prepared from, but its data is not removed at once, so a backtest already
+ * running against one of its versions is not disrupted.
  *
  */
 export const deleteDataset = <ThrowOnError extends boolean = false>(
@@ -1218,6 +1310,181 @@ export const getDataset = <ThrowOnError extends boolean = false>(
     ],
     url: "/datasets/{datasetId}",
     ...options,
+  });
+};
+
+/**
+ * Move a dataset into a collection, or back to the root
+ * The body is exactly `{"collectionId": "dc_..."}` to move the dataset into that collection,
+ * or `{"collectionId": null}` to take it out of its collection. Nothing else about a dataset
+ * can be changed here: a body without `collectionId`, or with any other field, is `400`, so a
+ * field is never silently ignored. Any `type` can go in any collection. The dataset keeps its
+ * `name`, which stays unique among all your datasets, whatever collection each is in.
+ *
+ * Answers the dataset, as `GET /datasets/{datasetId}` does. Moving a dataset to where it
+ * already is succeeds and changes nothing.
+ *
+ */
+export const moveDataset = <ThrowOnError extends boolean = false>(
+  options: Options<MoveDatasetData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).patch<
+    MoveDatasetResponse,
+    MoveDatasetError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/datasets/{datasetId}",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  });
+};
+
+/**
+ * List your collections
+ * Every collection you have, in one response: there is no paging. Ordered by `name`, then by
+ * `collectionId`. Never a `404`: an empty array if you have none. A collection is deleted for
+ * good, so there is no `includeDeleted`: one that is not in the list no longer exists.
+ *
+ */
+export const listCollections = <ThrowOnError extends boolean = false>(
+  options?: Options<ListCollectionsData, ThrowOnError>
+) => {
+  return (options?.client ?? _heyApiClient).get<
+    ListCollectionsResponse,
+    ListCollectionsError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/collections",
+    ...options,
+  });
+};
+
+/**
+ * Create a collection
+ * Creates an empty collection, a folder to keep datasets in. A collection is one level deep:
+ * it holds datasets and nothing else. The Datasets guide explains how collections work.
+ *
+ * `name` is required; it is trimmed, and the trimmed text has 1 to 100 characters. It is
+ * unique among your collections, compared as written (`Majors` and `majors` are two names).
+ * `description` is optional, up to 500 characters; a blank one is the same as none. The `201`
+ * is the collection, with `datasetCount` `0`.
+ *
+ */
+export const createCollection = <ThrowOnError extends boolean = false>(
+  options: Options<CreateCollectionData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).post<
+    CreateCollectionResponse,
+    CreateCollectionError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/collections",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  });
+};
+
+/**
+ * Delete a collection
+ * Deletes the collection for good; its name is free again at once. **The datasets in it are
+ * kept**: they go back to the root, as if they had never been in a collection. Nothing else
+ * about them changes.
+ *
+ */
+export const deleteCollection = <ThrowOnError extends boolean = false>(
+  options: Options<DeleteCollectionData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).delete<
+    DeleteCollectionResponse,
+    DeleteCollectionError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/collections/{collectionId}",
+    ...options,
+  });
+};
+
+/**
+ * Get a collection by id
+ * One of your collections, with the count of the datasets in it.
+ */
+export const getCollection = <ThrowOnError extends boolean = false>(
+  options: Options<GetCollectionData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).get<
+    GetCollectionResponse,
+    GetCollectionError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/collections/{collectionId}",
+    ...options,
+  });
+};
+
+/**
+ * Rename a collection or change its description
+ * Send `name`, `description` or both. A field you leave out is left as it is. `description:
+ * null`, or a blank one, removes the description; `name` cannot be `null`. The limits are
+ * those of creation. A body with neither field is `400`; any other field is ignored. Answers
+ * the collection as it is after the change. A rename frees the old name at once.
+ *
+ */
+export const updateCollection = <ThrowOnError extends boolean = false>(
+  options: Options<UpdateCollectionData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).patch<
+    UpdateCollectionResponse,
+    UpdateCollectionError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/collections/{collectionId}",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
   });
 };
 
@@ -1327,8 +1594,31 @@ export const getDatasetUpload = <ThrowOnError extends boolean = false>(
  * A `cex` import covers one instrument over a range: the API reads that range of the
  * exchange's history, builds the bars of the requested `cadence` from the finest data it has
  * for it, and stores the result as a dataset version, exactly as for an upload. `cex.dataType`
- * picks tickers or klines and is also the resulting dataset's `type`. The range is capped by
- * your tier like any import (`maxImportRangeHours` of `GET /account`).
+ * picks tickers or klines and is also the resulting dataset's `type`. The range of a `cex`
+ * import is capped by your tier's `maxCexImportRangeHours` of `GET /account`, in hours and
+ * counted apart from a pool's (`maxImportRangeHours`): the history is already kept by the
+ * platform, so it reaches weeks on the larger plans. On the plans that have no such cap
+ * (`maxCexImportRangeHours` is the largest whole number) the range is held by three other
+ * limits, all refused with `400` before anything is queued:
+ *
+ * * **The size of the file.** The API estimates the bars the range holds at its `cadence`
+ * (a request with no `cadence` is judged at `1s`, the finest there is) and the size of the
+ * file they make, and refuses a range over your tier's `maxDatasetBytes`. The message says
+ * how many days that cadence reaches on your plan, so a coarser cadence is what takes a
+ * longer range: on a 500 MiB file, `1s` candles reach about a hundred days and `1m`
+ * candles cover every year of an exchange's history. `reason: IMPORT_TOO_LARGE`.
+ * * **How far back it starts.** `from` cannot be earlier than your tier's
+ * `maxCexHistoryDays` days before now. `reason: IMPORT_OUTSIDE_HISTORY`.
+ * * **At least two bars.** A range shorter than two bars of its `cadence` is refused instead
+ * of being queued to fail. `reason: IMPORT_TOO_FEW_BARS`.
+ *
+ * **Instruments per month.** Your tier's `maxCexImportInstrumentsPerMonth` is how many
+ * different instruments of one market (an exchange and its segment) you can import in a
+ * calendar month (UTC). Importing an instrument again in the same month costs nothing. An
+ * import that fails for good gives its place back. Over it the import is a `429` with
+ * `reason: IMPORT_MONTHLY_QUOTA` and no `Retry-After`: the message says when it renews.
+ * `GET /account/usage` shows what you have used. A tier with no such limit has
+ * `maxCexImportInstrumentsPerMonth` at the largest whole number.
  *
  * **An import is held to your plan's cadences,** the same ones as the preparation of an
  * exchange's data (the "Cadences by plan" section of the Backtests guide). A `cadence` your plan does not include is `402`; a
@@ -1452,7 +1742,7 @@ export const stopLive = <ThrowOnError extends boolean = false>(
  * with a `stream`, `streamUrl` is here too while the run is running and your plan allows it.
  *
  * While the run is being executed it also carries `stats`, the run's latest counters (updates
- * processed, rate, instruments seen), refreshed about once a minute. Starting or stopping a run
+ * processed, rate, instruments seen), refreshed periodically. Starting or stopping a run
  * does not return them; read them here.
  *
  */
@@ -1499,8 +1789,7 @@ export const getLive = <ThrowOnError extends boolean = false>(
  *
  * `sources` takes one entry, or none: a start with no `sources` makes a run that waits for a source (see `POST /live/{runId}/attachments`).
  * `type` is `ticker` or `kline`; anything else is rejected. Both connect to the lightest
- * (fastest) cadence available for the exchange — today that is 1 tick/second on every
- * supported exchange; choosing among several cadences is not offered yet.
+ * (fastest) cadence available for the exchange; choosing among several cadences is not offered.
  *
  * `venueType` is `cex` (a centralized exchange) or `dex` (one pool on a decentralized exchange). A `dex` source reads one
  * pool, takes only `kline`, and needs the pool's address as its single instrument. See the "Live execution" guide,
@@ -1538,8 +1827,7 @@ export const getLive = <ThrowOnError extends boolean = false>(
  * **Warming up.** Pass `warmFrom` to choose how many seconds before its start the run replays the market
  * feed from, so that its indicators and windows have history when the first live tick arrives. `0` replays
  * nothing: the run delivers its first signal as soon as it is running, but its indicators start empty and the
- * first bar of a window can be partial. Omitted, the platform replays from the start of the current 15-minute
- * block, which is between 0 and 900 seconds before the run's start, so the first bar of a 15-minute window is
+ * first bar of a window can be partial. Omitted, the platform chooses how far back to replay, so that the first bar of the usual windows is
  * complete. The value in effect, yours or the platform's, comes back as `warmFrom`. It can be set only here,
  * when the run is started. See the "Live execution" guide, "Warming up".
  *
@@ -1707,6 +1995,10 @@ export const updateLive = <ThrowOnError extends boolean = false>(
  * WebSocket paths to this same update (see the "Live execution" guide) land on the exact same
  * value at the exact same moment.
  *
+ * A run that reads no source (`state: WAITING`) is not running anywhere, so there is no moment to apply
+ * the change at: the new values are kept for the run and it starts with them when its first source is
+ * attached. The answer has no `effectiveAtMs`.
+ *
  */
 export const updateLiveParams = <ThrowOnError extends boolean = false>(
   options: Options<UpdateLiveParamsData, ThrowOnError>
@@ -1737,8 +2029,8 @@ export const updateLiveParams = <ThrowOnError extends boolean = false>(
  * implements the engine's `CommandRequestHandler`. Owner only.
  *
  * A command is an event, not a stored setting: it is delivered once to every execution behind the run, at
- * the same market position, and nothing about it is written to the run's state. **It is transient** — a
- * replica that restarts replays only its recent market history, so a command from before that only reaches
+ * the same market position, and nothing about it is written to the run's state. **It is transient** — it is
+ * not replayed when an execution restarts, so a command from before that only reaches
  * one that was already running when it arrived. Anything the strategy needs to remember across a restart
  * belongs in a parameter (`PUT /live/{runId}/params`), which does have a stored value; a command does not.
  *
@@ -1779,7 +2071,8 @@ export const sendLiveCommand = <ThrowOnError extends boolean = false>(
  *
  * `source` is the same entry `sources` takes at start and is checked the same way (see "Sources" in the Live
  * execution guide). `warmFrom` is how many seconds of the feed before the attachment the strategy sees first,
- * `0` to `3600`, for this source only; left out, the same default as at start. `ref` is a string of yours, up to
+ * `0` to `3600`, for this source only; left out, the same default as at start. `resolveInstrument` says when the
+ * strategy is told of a `dex` pool (see "The instrument of a pool" in the Live execution guide). `ref` is a string of yours, up to
  * 64 characters: sending the same `ref` to the same run answers the attachment it already made instead of
  * making another one, so a retried request or a repeated alert is safe. So does sending a source the run
  * already has attached or being attached, whatever its `ref`.
@@ -1846,7 +2139,7 @@ export const detachLiveSource = <ThrowOnError extends boolean = false>(
 
 /**
  * Revoke a run's stream URL
- * Revokes a run's stream URL **for good**: connections open on it are closed within about 15 seconds and it
+ * Revokes a run's stream URL **for good**: connections open on it are closed shortly afterwards and it
  * answers `404` from then on. The run itself is not touched, and a stream cannot be added to it again; start
  * the run again with `stream: true` for a new URL. Owner only, and always allowed, whatever your plan or the
  * run's state. Repeating it is not an error.
@@ -1874,7 +2167,7 @@ export const revokeLiveStream = <ThrowOnError extends boolean = false>(
 /**
  * Rotate a run's stream URL
  * Gives a run a **new** stream URL and retires the old one: connections open on the old URL are closed
- * within about 15 seconds and the old URL answers `404` from then on. Use it when the URL may have leaked.
+ * shortly afterwards and the old URL answers `404` from then on. Use it when the URL may have leaked.
  * Owner only, and only for a run that is running and was started with `stream: true` (the URL cannot be added
  * to a run later, and a revoked one cannot be brought back). The plan is checked again: a plan that may not
  * broadcast gets `429`.
@@ -1957,7 +2250,7 @@ export const getLiveRunSignals = <ThrowOnError extends boolean = false>(
  *
  * `equity` is the account's latest recorded value: at the last closed trade (`equityKind:
  * equity`), or the last periodic mark-to-market while positions are open (`equityKind:
- * mark`, taken every minute of market time). Until either exists the account holds its
+ * mark`, taken periodically). Until either exists the account holds its
  * starting capital.
  *
  * A run started with `accounts: instrument` has one account per instrument instead: each
@@ -1967,7 +2260,7 @@ export const getLiveRunSignals = <ThrowOnError extends boolean = false>(
  * A position also says what it is worth. When the last mark valued it as it stands now, its
  * entry in `openPositions` carries `markPrice` (the price it was valued at), `markedAtMs`
  * (when) and `unrealisedPnl` (`base` times `markPrice`, minus `cost`). A position opened or
- * changed since the last mark, which is at most about a minute old, has none of the three yet.
+ * changed since the last mark has none of the three yet.
  * The account says it for all its positions together: `unrealisedPnl` (their sum, `0` when it
  * holds nothing) and `totalPnl` (with its `realisedPnl`); both are absent while any of its
  * positions has no current mark.
@@ -2010,8 +2303,8 @@ export const getLiveRunPaper = <ThrowOnError extends boolean = false>(
  * parameters, with the account's `currency` and its `gaps` alongside. The curve is kept for
  * the life of the run, so unlike signals it has no moving window.
  *
- * It is one series of running equity: the value after every closed trade and, every minute
- * of market time while positions are open, the value marked to market. Where the run was
+ * It is one series of running equity: the value after every closed trade and, periodically
+ * while positions are open, the value marked to market. Where the run was
  * restarted with positions open, those positions are not carried over, so the curve has no
  * value there: that moment is listed in `gaps` and is not a point of the curve.
  *
@@ -2100,5 +2393,628 @@ export const mintLiveConnectionToken = <ThrowOnError extends boolean = false>(
     ],
     url: "/live/token",
     ...options,
+  });
+};
+
+/**
+ * List your signal channels
+ * The channels you own, as their owner sees them, most recently created first. A deleted channel is not listed.
+ */
+export const listSignalChannels = <ThrowOnError extends boolean = false>(
+  options?: Options<ListSignalChannelsData, ThrowOnError>
+) => {
+  return (options?.client ?? _heyApiClient).get<
+    ListSignalChannelsResponse,
+    ListSignalChannelsError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/signals/channels",
+    ...options,
+  });
+};
+
+/**
+ * Create a signal channel
+ * Creates a channel of yours: a place where you publish notices about instruments that deserve attention. What
+ * you sell are its **offers** (`POST /signals/channels/{channelId}/offers`): a delay, how many runs one
+ * subscription feeds, how long it lasts. Each sale is a single-use **code**; whoever redeems it gets a
+ * subscription that feeds their live runs, and each notice you publish reaches those runs, at the offer's delay,
+ * as an attachment of the instrument. See the **[Signal channels](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/signals.md)** guide.
+ *
+ * A new channel is `unlisted`: it is found only by its `channelId`. `public` also lists it in
+ * `GET /signals/channels/public`, with its offers.
+ *
+ * The answer is the channel as you, its owner, see it: with its `webhookUrl`, the secret address that publishes
+ * a notice without a token (see `POST /signals/hook/{hookKey}`).
+ *
+ */
+export const createSignalChannel = <ThrowOnError extends boolean = false>(
+  options: Options<CreateSignalChannelData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).post<
+    CreateSignalChannelResponse,
+    CreateSignalChannelError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/signals/channels",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  });
+};
+
+/**
+ * Browse public signal channels
+ * Every channel whose owner made it `public`, most recently created first, listed without revealing who owns
+ * it. An `unlisted` channel is not here: it is reached only by its `channelId`.
+ *
+ * Needs no `Authorization` header.
+ *
+ */
+export const listPublicSignalChannels = <ThrowOnError extends boolean = false>(
+  options?: Options<ListPublicSignalChannelsData, ThrowOnError>
+) => {
+  return (options?.client ?? _heyApiClient).get<
+    ListPublicSignalChannelsResponse,
+    ListPublicSignalChannelsError,
+    ThrowOnError
+  >({
+    url: "/signals/channels/public",
+    ...options,
+  });
+};
+
+/**
+ * Delete a signal channel of yours
+ * Deletes the channel. Its subscriptions end (`state: ENDED`), notices already published and not yet delivered
+ * are not delivered (`SKIPPED`), and its `webhookUrl` stops publishing. Owner only. Deleting it again is not an
+ * error.
+ *
+ */
+export const deleteSignalChannel = <ThrowOnError extends boolean = false>(
+  options: Options<DeleteSignalChannelData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).delete<
+    DeleteSignalChannelResponse,
+    DeleteSignalChannelError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/signals/channels/{channelId}",
+    ...options,
+  });
+};
+
+/**
+ * Read a signal channel
+ * Any channel, `unlisted` or `public`, by its `channelId`: what you need to decide whether to subscribe. Its owner
+ * is never named. Its owner also gets `webhookUrl` and `subscriptions`.
+ *
+ */
+export const getSignalChannel = <ThrowOnError extends boolean = false>(
+  options: Options<GetSignalChannelData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).get<
+    GetSignalChannelResponse,
+    GetSignalChannelError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/signals/channels/{channelId}",
+    ...options,
+  });
+};
+
+/**
+ * Change a signal channel of yours
+ * Changes any of `name`, `description` and `visibility`; what is left out stays as it is. `rotateWebhook: true`
+ * replaces the `webhookUrl`: the old address stops publishing at once. Owner only.
+ *
+ */
+export const updateSignalChannel = <ThrowOnError extends boolean = false>(
+  options: Options<UpdateSignalChannelData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).patch<
+    UpdateSignalChannelResponse,
+    UpdateSignalChannelError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/signals/channels/{channelId}",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  });
+};
+
+/**
+ * List the notices of a channel of yours
+ * The notices you published on the channel, most recent first, each with how its deliveries stand, as counts.
+ * Who received them is never shown. Owner only.
+ *
+ */
+export const listSignalNotices = <ThrowOnError extends boolean = false>(
+  options: Options<ListSignalNoticesData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).get<
+    ListSignalNoticesResponse,
+    ListSignalNoticesError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/signals/channels/{channelId}/notices",
+    ...options,
+  });
+};
+
+/**
+ * Publish a notice on a channel of yours
+ * Publishes a notice: an instrument that deserves attention. It is delivered to every run fed by a subscription
+ * of the channel that is active at this moment, each at its subscription's delay, by attaching the instrument to
+ * the run (see
+ * "Attaching and detaching a source" in the Live execution guide). Owner only.
+ *
+ * `source` names the instrument: a pair of a centralized exchange, or one pool. How the run reads it (`ticker` or
+ * `kline`, and its warm-up) is said for each run that a subscription feeds. `ref` is a string of yours, up to 64 characters:
+ * sending the same `ref` to the same channel answers the notice it already made instead of making another one, so
+ * a retried request or a repeated alert is safe, and it does not count against the rate of the channel.
+ * `expiresIn` is how long the notice is worth acting on: a delivery not made by then is `EXPIRED`.
+ *
+ * The `202` is the acceptance: `deliveries` is how many runs it goes to. What each delivery did is read
+ * by the subscriber, not by you; you see counts in `GET /signals/channels/{channelId}/notices`.
+ *
+ */
+export const publishSignalNotice = <ThrowOnError extends boolean = false>(
+  options: Options<PublishSignalNoticeData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).post<
+    PublishSignalNoticeResponse,
+    PublishSignalNoticeError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/signals/channels/{channelId}/notices",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  });
+};
+
+/**
+ * List the offers of a channel of yours
+ * The channel's offers, oldest first, each with its counts: codes minted and redeemed, subscriptions active now,
+ * and the runs they feed. Who bought them is never shown. Owner only.
+ *
+ */
+export const listSignalOffers = <ThrowOnError extends boolean = false>(
+  options: Options<ListSignalOffersData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).get<
+    ListSignalOffersResponse,
+    ListSignalOffersError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/signals/channels/{channelId}/offers",
+    ...options,
+  });
+};
+
+/**
+ * Create an offer of a channel of yours
+ * An offer is what you sell: notices of this channel at `delay` seconds after they are published, to up to
+ * `maxRuns` of the buyer's live runs, for `durationDays` from the moment the code is redeemed (left out, it does
+ * not expire). `purchaseUrl` is where you sell it, shown with the channel; `https` only. Owner only.
+ *
+ * A channel has at most 10 offers; several may share a delay (for example 60 s for 1 run, and 60 s for 5 runs).
+ * You sell an offer by minting codes for it (`POST /signals/offers/{offerId}/codes`).
+ *
+ */
+export const createSignalOffer = <ThrowOnError extends boolean = false>(
+  options: Options<CreateSignalOfferData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).post<
+    CreateSignalOfferResponse,
+    CreateSignalOfferError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/signals/channels/{channelId}/offers",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  });
+};
+
+/**
+ * List the codes of an offer of yours
+ * The offer's codes, oldest first: their prefix and state (`UNUSED`, `REDEEMED` or `REVOKED`), never the code
+ * itself and never who redeemed it. Owner only.
+ *
+ */
+export const listSignalCodes = <ThrowOnError extends boolean = false>(
+  options: Options<ListSignalCodesData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).get<
+    ListSignalCodesResponse,
+    ListSignalCodesError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/signals/offers/{offerId}/codes",
+    ...options,
+  });
+};
+
+/**
+ * Mint codes for an offer of yours
+ * Mints `count` single-use codes, one per sale. **This answer is the only time the codes are shown**: the
+ * platform keeps only a fingerprint of each, and `GET` lists their prefixes. Hand each code to the buyer it was
+ * sold to; whoever redeems it (`POST /signals/subscriptions`) gets a subscription to the offer. Revoke a code you
+ * refund (`DELETE /signals/codes/{codeId}`). Up to 100 codes a call, and 10 000 an offer. Owner only.
+ *
+ */
+export const mintSignalCodes = <ThrowOnError extends boolean = false>(
+  options: Options<MintSignalCodesData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).post<
+    MintSignalCodesResponse,
+    MintSignalCodesError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/signals/offers/{offerId}/codes",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  });
+};
+
+/**
+ * Revoke a code of yours
+ * Revokes the code. If it was redeemed, **the whole subscription it created or renewed is revoked**: its runs
+ * stop being fed and the deliveries not yet made are `SKIPPED` with `ACCESS_REVOKED`. What was already attached
+ * to the runs stays attached. Revoking it again is not an error. Owner only.
+ *
+ */
+export const revokeSignalCode = <ThrowOnError extends boolean = false>(
+  options: Options<RevokeSignalCodeData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).delete<
+    RevokeSignalCodeResponse,
+    RevokeSignalCodeError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/signals/codes/{codeId}",
+    ...options,
+  });
+};
+
+/**
+ * List your subscriptions
+ * Your subscriptions, with the runs each feeds, most recently created first.
+ */
+export const listSignalSubscriptions = <ThrowOnError extends boolean = false>(
+  options?: Options<ListSignalSubscriptionsData, ThrowOnError>
+) => {
+  return (options?.client ?? _heyApiClient).get<
+    ListSignalSubscriptionsResponse,
+    ListSignalSubscriptionsError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/signals/subscriptions",
+    ...options,
+  });
+};
+
+/**
+ * Redeem a code
+ * Redeems a code you bought: you get a subscription to its offer, with the offer's delay, number of runs and
+ * duration (counted from now). Feed your runs with it (`POST /signals/subscriptions/{subscriptionId}/runs`).
+ *
+ * A code is used once. Sending the same code again yourself answers the subscription it gave you (`200`), so a
+ * retried request is safe; a code someone else redeemed is `409` with `reason: CODE_USED`.
+ *
+ */
+export const redeemSignalCode = <ThrowOnError extends boolean = false>(
+  options: Options<RedeemSignalCodeData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).post<
+    RedeemSignalCodeResponse,
+    RedeemSignalCodeError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/signals/subscriptions",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  });
+};
+
+/**
+ * Cancel a subscription of yours
+ * Cancels the subscription (`ENDED`): its runs stop being fed, and deliveries not yet made are `SKIPPED`. What was
+ * already attached stays attached; detach it from a run if you want to (`DELETE
+ * /live/{runId}/attachments/{attachmentId}`). Cancelling it again is not an error.
+ *
+ */
+export const cancelSignalSubscription = <ThrowOnError extends boolean = false>(
+  options: Options<CancelSignalSubscriptionData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).delete<
+    CancelSignalSubscriptionResponse,
+    CancelSignalSubscriptionError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/signals/subscriptions/{subscriptionId}",
+    ...options,
+  });
+};
+
+/**
+ * Read a subscription of yours
+ */
+export const getSignalSubscription = <ThrowOnError extends boolean = false>(
+  options: Options<GetSignalSubscriptionData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).get<
+    GetSignalSubscriptionResponse,
+    GetSignalSubscriptionError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/signals/subscriptions/{subscriptionId}",
+    ...options,
+  });
+};
+
+/**
+ * Renew a subscription of yours with a code
+ * Renews the subscription with another code of **the same offer**: its expiry moves by the offer's duration, from
+ * its current expiry or, if it has already expired, from now. An expired subscription resumes with the runs it
+ * fed, and counts against your plan again. The same code sent again to the same subscription answers it
+ * unchanged.
+ *
+ */
+export const renewSignalSubscription = <ThrowOnError extends boolean = false>(
+  options: Options<RenewSignalSubscriptionData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).post<
+    RenewSignalSubscriptionResponse,
+    RenewSignalSubscriptionError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/signals/subscriptions/{subscriptionId}/renew",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  });
+};
+
+/**
+ * Feed one of your runs from a subscription
+ * From now on every notice of the subscription's channel reaches the run at the subscription's delay, as an
+ * attachment of the instrument as a source of `type`, with `warmFrom` seconds of warm-up. A run that waits with
+ * no source is the natural target: the first delivery starts it.
+ *
+ * `type` is how the run reads a centralized exchange's instrument, `ticker` or `kline`, and must be one the run's
+ * strategy consumes; left out, `kline`. A pool is always read as `kline`. `warmFrom` is as for an attachment,
+ * `0` to `3600`; left out, `0`, so the run reads from the moment of the delivery. A pool delivered to a run that
+ * already reads another is read from that moment whatever `warmFrom` says. `resolveInstrument` is as for an
+ * attachment.
+ *
+ * A subscription feeds at most its `maxRuns` runs at once, and a run is fed by one subscription of a channel at a
+ * time. The same run sent again answers the subscription unchanged.
+ *
+ */
+export const feedSignalSubscriptionRun = <ThrowOnError extends boolean = false>(
+  options: Options<FeedSignalSubscriptionRunData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).post<
+    FeedSignalSubscriptionRunResponse,
+    FeedSignalSubscriptionRunError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/signals/subscriptions/{subscriptionId}/runs",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  });
+};
+
+/**
+ * Stop feeding a run from a subscription
+ * No new notice reaches the run from this subscription, and its deliveries not yet made are `SKIPPED`. What was
+ * already attached stays attached. Again is not an error.
+ *
+ */
+export const stopFeedingSignalSubscriptionRun = <
+  ThrowOnError extends boolean = false
+>(
+  options: Options<StopFeedingSignalSubscriptionRunData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).delete<
+    StopFeedingSignalSubscriptionRunResponse,
+    StopFeedingSignalSubscriptionRunError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/signals/subscriptions/{subscriptionId}/runs/{runId}",
+    ...options,
+  });
+};
+
+/**
+ * List what a subscription of yours received
+ * Every notice due to the runs the subscription feeds, one delivery per run (`runId`), most recent first, with
+ * what it did: `PENDING` (not due yet), `ATTACHED` (the instrument was attached to the run: read the run's
+ * `attachments` for how the attachment stands), `REFUSED` (the run could not take it; `reason` says why),
+ * `EXPIRED` (not made before the notice expired) or `SKIPPED` (not made: the run was not running or no longer fed,
+ * the subscription was cancelled, revoked or expired, or the channel was deleted). The notice's `source` and `data` come with it from `dueAtMs` on: before that a delivery says that a
+ * notice is coming and when, not what it is about, so a subscription at a delayed level learns of the instrument
+ * no earlier than its level.
+ *
+ */
+export const listSignalDeliveries = <ThrowOnError extends boolean = false>(
+  options: Options<ListSignalDeliveriesData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).get<
+    ListSignalDeliveriesResponse,
+    ListSignalDeliveriesError,
+    ThrowOnError
+  >({
+    security: [
+      {
+        scheme: "bearer",
+        type: "http",
+      },
+    ],
+    url: "/signals/subscriptions/{subscriptionId}/deliveries",
+    ...options,
+  });
+};
+
+/**
+ * Publish a notice through a channel's webhook address
+ * The same as `POST /signals/channels/{channelId}/notices`, for a sender that cannot get a token or set headers:
+ * the address itself, the channel's `webhookUrl`, is the credential. Keep it secret; replace it with
+ * `PATCH /signals/channels/{channelId}` and `rotateWebhook: true` if it leaks.
+ *
+ * Needs no `Authorization` header. The body, the limits and the answers are those of publishing with a token.
+ *
+ */
+export const publishSignalNoticeByHook = <ThrowOnError extends boolean = false>(
+  options: Options<PublishSignalNoticeByHookData, ThrowOnError>
+) => {
+  return (options.client ?? _heyApiClient).post<
+    PublishSignalNoticeByHookResponse,
+    PublishSignalNoticeByHookError,
+    ThrowOnError
+  >({
+    url: "/signals/hook/{hookKey}",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
   });
 };

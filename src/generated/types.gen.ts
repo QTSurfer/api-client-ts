@@ -17,6 +17,18 @@ export type ResponseError = {
    * Present only on an error that has one, and each operation that can return one lists
    * the values it uses. A client treats a value it does not know like an absent `reason`.
    *
+   * Besides the values an operation lists, these can come with any operation:
+   *
+   * | `reason` | Status | When |
+   * |---|---|---|
+   * | `STRATEGY_OUTDATED` | `409` | The strategy was compiled for an earlier version of the platform: register it again. |
+   * | `PLAN_REQUIRED` | `402` | Your plan does not include what the request asks for. |
+   * | `PLAN_LIMIT` | `429` | You reached a limit of your own plan (no `Retry-After`: waiting does not help). |
+   * | `INVALID_VALUE` | `400` | A number, a date or a name of the request could not be read. |
+   * | `INVALID_BODY` | `400` | The request body is not JSON. |
+   * | `WRONG_FIELD_TYPE` | `400` | A field of the body has a value of the wrong type. |
+   * | `INTERNAL_ERROR` | `500` | A failure on our side; quote the reference in `message` when you ask for help. |
+   *
    */
   reason?: string;
   /**
@@ -157,7 +169,7 @@ export type PoolListResponse = {
  */
 export type PoolListMeta = {
   /**
-   * When this listing was last refreshed. It is refreshed every hour, and the `lastPrice` of each pool is as of this time.
+   * When this listing was last refreshed. The `lastPrice` of each pool is as of this time.
    */
   updatedAt: string;
   /**
@@ -194,13 +206,16 @@ export type PoolLinks = {
 };
 
 /**
- * A pool of a decentralized exchange that a live run can read. The listing is a place to start, not the
- * whole market: a live run can read any pool of the protocol, listed or not.
+ * A pool of a decentralized exchange. The listing is a place to start, not the whole market: a live run
+ * can read any pool of the protocol, listed or not, on an exchange whose segment is in `liveSegments`.
  *
  */
 export type PoolDetail = {
   /**
-   * The pool's address, in lower case. It is the value to put in `instruments` of a live run's source.
+   * The pool's address. On an EVM chain (`robinhood`) it is `0x` and 40 hexadecimal digits, in lower case.
+   * On `solana` it is a base58 address of 32 to 44 characters, which is case-sensitive: use it exactly as
+   * listed. It is the value to put in `instruments` of a live run's source.
+   *
    */
   id: string;
   /**
@@ -216,19 +231,19 @@ export type PoolDetail = {
    */
   quote: string;
   /**
-   * Address of the base token, in lower case
+   * Address of the base token, in the form of `id` (lower case on an EVM chain; as written, base58 and case-sensitive, on `solana`)
    */
   baseAddress: string;
   /**
-   * Address of the quote token, in lower case
+   * Address of the quote token, in the form of `id` (lower case on an EVM chain; as written, base58 and case-sensitive, on `solana`)
    */
   quoteAddress: string;
   /**
-   * The pool's fee tier, in percent (`0.05` is a 0.05 % fee). A protocol can have several pools of the same pair, one per fee tier.
+   * The pool's fee tier, in percent (`0.05` is a 0.05 % fee). A protocol can have several pools of the same pair, one per fee tier. Absent when the source does not tell it, which is the case of most pools of `solana`.
    */
-  feePercent: number;
+  feePercent?: number;
   /**
-   * The price of one base token in the quote token, as the signals of a run on this pool name the pair. It is as of `meta.updatedAt`, so up to one hour old. Absent when there is no price for the pool.
+   * The price of one base token in the quote token, as the signals of a run on this pool name the pair. It is as of `meta.updatedAt`. Absent when there is no price for the pool.
    */
   lastPrice?: number;
   /**
@@ -325,9 +340,25 @@ export type Account = {
    */
   maxSweepCartesian: number;
   /**
-   * Maximum length, in hours, of the time range of one dataset import from an exchange.
+   * Maximum length, in hours, of the time range of one dataset import of a decentralized exchange's pool (`type: dex`).
    */
   maxImportRangeHours: number;
+  /**
+   * Maximum length, in hours, of the time range of one dataset import of a centralized exchange's history (`type: cex`). It is counted apart from `maxImportRangeHours`.
+   */
+  maxCexImportRangeHours: number;
+  /**
+   * Maximum number of dataset imports your account may have in flight at once, queued or running, whether of an exchange's history or of a pool. A new import over it is refused with `429` until one has finished.
+   */
+  maxConcurrentImports: number;
+  /**
+   * How far back from now, in days, an import of a centralized exchange's history (`type: cex`) may start. The largest whole number means as far back as the platform keeps. Absent on a platform that has not adopted it.
+   */
+  maxCexHistoryDays?: number;
+  /**
+   * How many different instruments of one market (an exchange and its segment) your account may import from an exchange's history in a calendar month (UTC). Importing the same instrument again in the month costs nothing. The largest whole number means no limit. Absent on a platform that has not adopted it.
+   */
+  maxCexImportInstrumentsPerMonth?: number;
   /**
    * Maximum number of active datasets your tier allows.
    */
@@ -400,7 +431,21 @@ export type AccountUsage = {
    *
    */
   storageBytesUsed: number;
+  /**
+   * The calendar month (UTC, `YYYY-MM`) `cexImportInstruments` counts. Absent on a platform that has not adopted the monthly limit.
+   */
+  cexImportMonth?: string;
+  /**
+   * The instruments of an exchange's history you have imported this month, counted per market against `GET /account`'s `maxCexImportInstrumentsPerMonth`. A market with none is not listed.
+   */
+  cexImportInstruments?: Array<CexImportInstrumentUsage>;
   _links: AccountUsageLinks;
+};
+
+export type CexImportInstrumentUsage = {
+  exchange: string;
+  segment: string;
+  used: number;
 };
 
 /**
@@ -572,7 +617,7 @@ export type PrepareRequest = {
   to: string;
   /**
    * Output bar cadence for the prepared range. Coarser cadences are produced on demand by
-   * resampling the source and stored alongside the native blob in cache. A target finer
+   * resampling the source and kept for later requests. A target finer
    * than the source, or not an exact multiple of it, returns `400`. What's accepted, and
    * what omitting it means, depends on the source:
    *
@@ -604,7 +649,7 @@ export type PrepareRequest = {
  */
 export type JobState = {
   /**
-   * Identifier for the job's execution context. Its current shape is a colon-delimited string encoding the data source type, an internal user id, the exchange, the job id, and the instrument — but that structure is not a committed contract and may change without notice. Treat it as an opaque token: store and pass it back, don't parse it.
+   * Identifier for the job's execution context. It is an opaque token whose shape may change without notice: store and pass it back, don't parse it.
    */
   contextId: string;
   /**
@@ -725,8 +770,8 @@ export type PrepareJobState = JobState & {
      */
     hour?: string;
     /**
-     * Expected row count for the hour (currently always 0; reserved for
-     * future use). The rationale never depends on it.
+     * Expected row count for the hour (always 0; reserved).
+     * The rationale never depends on it.
      *
      */
     expected?: number;
@@ -908,11 +953,11 @@ export type SweepProgress = {
    */
   failedShards: number;
   /**
-   * Units whose last attempt failed on something transient — an I/O error, a worker that died mid-read — and which are queued to be attempted again. Not counted as failures, because they have not failed yet; a sweep with a non-zero value here is still expected to complete.
+   * Units whose last attempt failed on something transient — an I/O error, for example — and which are queued to be attempted again. Not counted as failures, because they have not failed yet; a sweep with a non-zero value here is still expected to complete.
    */
   retrying: number;
   /**
-   * Units that have not reported anything yet. Covers both work still queued behind other work and work claimed by a worker that stopped before it began, which is why a sweep with a persistent value here and a rising `stalledSeconds` is worth looking at.
+   * Units that have not reported anything yet. Covers both work still waiting behind other work and work that stopped before it began, which is why a sweep with a persistent value here and a rising `stalledSeconds` is worth looking at.
    */
   notStarted: number;
   /**
@@ -920,7 +965,7 @@ export type SweepProgress = {
    */
   stalledSeconds?: number;
   /**
-   * Rough seconds remaining, extrapolated from the rate observed so far and assuming nothing else competes for workers. Runs conservative in practice — it has measured 2–5× long when a sweep spent part of its life waiting to be retried, since that wait dilutes the observed rate. **Omitted, never zero, when it cannot be computed**: a sweep with nothing finished yet has no rate to extrapolate from, and a zero would read as "about to finish". Excludes queue wait entirely; `retrying` and `stalledSeconds` are where that shows up.
+   * Rough seconds remaining, extrapolated from the rate observed so far and assuming nothing else competes for capacity. It can run long when a sweep spent part of its life waiting to be retried, since that wait dilutes the observed rate. **Omitted, never zero, when it cannot be computed**: a sweep with nothing finished yet has no rate to extrapolate from, and a zero would read as "about to finish". Excludes queue wait entirely; `retrying` and `stalledSeconds` are where that shows up.
    */
   etaSeconds?: number;
 };
@@ -978,8 +1023,8 @@ export type SweepRunRow = {
   /**
    * Present whenever this trial actually has a curve — which is any completed run of a sweep that requested curves at all (`equityCurve.mode` `topN`/`topPct`), not only the ranked winners. Absent, not null, when there is genuinely nothing: the run aborted, it made no trades, or the sweep never retained curves (`mode` `auto`/`none`).
    * Selection decides how the curve travels, not whether it exists. A row may carry `url` alone, or `url` together with the points inline.
-   * **Read `points`/`equities` to tell whether the curve is inline — never the presence of this object, and never the absence of `url`.** Both mislead, and in opposite directions: this object is present on rows that carry only a pointer, and `url` stays present alongside an inline curve so a caller can still re-request a different transform. An inline curve is emitted on the materialisation view (`?order=natural`), where each row is read once; the ranked view keeps the pointer, being polled.
-   * When only a pointer is present, `GET` the `url` for the curve. Its own `meta` there is the real, possibly size-guarded outcome. This outer `meta` may be a declaration rather than a measurement — for a row whose curve was not promoted, the point count is derived from the trade count (one equity point per closed trade) instead of being read from the store, to keep a polled response from doing per-row work.
+   * **Read `points`/`equities` to tell whether the curve is inline — never the presence of this object, and never the absence of `url`.** Both mislead, and in opposite directions: this object is present on rows that carry only a pointer, and `url` stays present alongside an inline curve so a caller can still re-request a different transform. An inline curve is emitted on the materialisation view (`?order=natural`), where each row is read once; the ranked view keeps the pointer.
+   * When only a pointer is present, `GET` the `url` for the curve. Its own `meta` there is the real, possibly size-guarded outcome. This outer `meta` may be a declaration rather than a measurement — for a row whose curve was not promoted, the point count is derived from the trade count (one equity point per closed trade) instead of being read from the store.
    */
   equityCurve?: EquityCurveResult;
 };
@@ -1084,7 +1129,7 @@ export type ExecuteSweepResult = {
   /**
    * The same `JobState` shape a single-execute `BacktestJobResult` carries — not a sweep-specific lookalike, the actual type, so field names and timestamp formatting match exactly.
    * `state.status` uses `JobState`'s own vocabulary (`New`/`Started`/`Completed`/ `Aborted`/`Failed`), mapped from the sweep's `status` field above rather than copying it: `PARTIAL` and `CANCELLED` both map to `Aborted`, because a sweep's `PARTIAL` is already terminal (some shards finished, some failed, nothing more is coming) unlike a single job's non-terminal `Partial`, which has no equivalent here at all.
-   * `state.completed` is real ticks processed on a plain sweep. On a `walkForward` sweep it is currently always `0` — the walk-forward fold runner was not wired to count ticks when this shipped, unlike the plain shard path.
+   * `state.completed` is real ticks processed on a plain sweep. On a `walkForward` sweep it is always `0`: ticks are not counted there.
    * `state.size` is an upfront estimate — range x the prepare's target cadence, set before any data is even loaded, not a query against loaded data — on a single execute and a plain sweep alike. A plain sweep's value is the sum of every shard's own `size` (each shard's per-run estimate x its own vector slice), the same additive shape `state.completed` already used above. `0` means the prepare context behind the job predates this field (a job whose prepare ran before the estimate existed) — never a guessed cadence standing in for a real one.
    * On a `walkForward` sweep, `state.size` is still always `0`: fold runs were out of scope for the estimate the same way they are for `state.completed` above — a fold's `size` is simply never set, so the sum stays honest at `0` rather than needing a special case.
    */
@@ -1192,7 +1237,7 @@ export type BacktestJobResult = {
  */
 export type ResultMap = {
   /**
-   * Identifier of the worker that executed the strategy. Useful when reporting issues so support can correlate with logs.
+   * Identifier of what executed the strategy. Quote it when you report an issue.
    */
   hostName?: string;
   /**
@@ -1267,7 +1312,7 @@ export type ResultMap = {
    */
   maxDrawdownPercent?: number;
   /**
-   * Equity curve over the backtest. `points[0]` (or `timestamps[0]`/`equities[0]` in `SHORT` mode) is an anchor at the backtest `from` with `initialCapital`; the remaining points are one sample per emitted yield, in order. Use it to plot the strategy's running equity without re-deriving it from the yield history. Always inline for a plain backtest today — never a pointer (`url`); that shape exists only for a sweep row's top-N winners.
+   * Equity curve over the backtest. `points[0]` (or `timestamps[0]`/`equities[0]` in `SHORT` mode) is an anchor at the backtest `from` with `initialCapital`; the remaining points are one sample per emitted yield, in order. Use it to plot the strategy's running equity without re-deriving it from the yield history. Always inline for a plain backtest — never a pointer (`url`); that shape exists only for a sweep row's top-N winners.
    */
   equityCurve?: EquityCurveResult;
   /**
@@ -1453,6 +1498,19 @@ export type Notice = {
 };
 
 /**
+ * What the strategy calls itself, read from its source: the name in the `strategy "Name"` header of a
+ * QTScript strategy, the public class of a Java one. It is the name to show for it wherever it is listed.
+ * Absent, not empty, when the source gives none (a Java source without a public class).
+ *
+ */
+export type StrategyName = string;
+
+/**
+ * What the source of the strategy is written in.
+ */
+export type StrategyLanguage = "java" | "qtscript";
+
+/**
  * One entry from `GET /strategies` — the same provenance a full `StrategyState` carries
  * (`compiledAt`, `requiredSources`), without its validation state, so listing stays cheap
  * regardless of how many strategies you have registered. Check a specific strategy's
@@ -1461,6 +1519,8 @@ export type Notice = {
  */
 export type StrategySummary = {
   strategyId: StrategyId;
+  name?: StrategyName;
+  language?: StrategyLanguage;
   /**
    * When the live compilation was produced.
    */
@@ -1489,6 +1549,8 @@ export type StrategySummary = {
  */
 export type StrategyState = {
   strategyId: StrategyId;
+  name?: StrategyName;
+  language?: StrategyLanguage;
   /**
    * * `not_validated` — registered, never checked. `POST /strategy/{strategyId}/validate`
    * checks it.
@@ -1569,9 +1631,15 @@ export type Dataset = {
    */
   datasetId: string;
   /**
-   * Unique among your datasets.
+   * Unique among your datasets, whatever collection each is in.
    */
   name: string;
+  /**
+   * The collection the dataset is in. Absent when it is at the root, never `null`. It
+   * changes with `PATCH /datasets/{datasetId}`, and goes away when the collection is deleted.
+   *
+   */
+  collectionId?: string;
   /**
    * What the rows of the current version are, decided when the version became `ready`. An
    * import that knows what it fetched says so: a `cex` import is its `dataType`, a `dex`
@@ -1594,6 +1662,23 @@ export type Dataset = {
    * When the dataset was created.
    */
   createdAt: string;
+  /**
+   * How the dataset came to be: a flat map of text to text, written once when the dataset
+   * is created and never changed afterwards. Always present, `{}` when nothing was recorded
+   * (an upload, or a dataset created before this field existed). It is information for
+   * whoever looks at the dataset, not something the API decides anything from.
+   *
+   * An import records what it was asked for, under keys that begin with `import.`
+   * (`import.type`, `import.cadence`, `import.from`, `import.to`, the range requested),
+   * `dex.` (`dex.network`, `dex.contract`, `dex.id`, `dex.version`, `dex.factory`) or `cex.`
+   * (`cex.exchange`, `cex.segment`, `cex.data_type`). A key with no value is left out. The
+   * keys the caller sent with the import (`pool.*`, `user.*`, see `DatasetImportRequest`)
+   * come back beside them.
+   *
+   */
+  meta?: {
+    [key: string]: string;
+  };
   /**
    * The id of the most recently finalized, successfully ingested version. Absent until at
    * least one upload has finished ingesting.
@@ -1672,15 +1757,99 @@ export type Dataset = {
 };
 
 /**
+ * A folder of datasets. A dataset is in at most one collection, and a collection holds
+ * datasets of any `type`.
+ *
+ */
+export type Collection = {
+  /**
+   * Opaque id, returned by `POST /collections`.
+   */
+  collectionId: string;
+  /**
+   * Unique among your collections, compared as written.
+   */
+  name: string;
+  /**
+   * Absent when the collection has none.
+   */
+  description?: string;
+  createdAt: string;
+  /**
+   * When the collection's `name` or `description` last changed.
+   */
+  updatedAt: string;
+  /**
+   * How many datasets are in the collection now. A dataset you have deleted does not count.
+   */
+  datasetCount: number;
+  /**
+   * The same datasets counted by their `type` (`ticker`, `klines`): a key for each type that
+   * has at least one dataset, the count as its value. Absent when the collection has no
+   * datasets. The keys come in no particular order.
+   *
+   */
+  datasetCountByType?: {
+    [key: string]: number;
+  };
+};
+
+export type CollectionList = {
+  collections: Array<Collection>;
+};
+
+export type CollectionCreateRequest = {
+  /**
+   * Trimmed; the trimmed text has 1 to 100 characters. `409` if you already have a collection of that name.
+   */
+  name: string;
+  /**
+   * Optional, up to 500 characters. A blank text, or `null`, is the same as none.
+   */
+  description?: string | null;
+};
+
+/**
+ * At least one of the two fields. A field left out is not changed.
+ */
+export type CollectionUpdateRequest = {
+  /**
+   * The new name, under the same rules as on creation. Cannot be `null`.
+   */
+  name?: string;
+  /**
+   * The new description, up to 500 characters. `null` or a blank text removes it.
+   */
+  description?: string | null;
+};
+
+export type CollectionDeleted = {
+  collectionId: string;
+  deleted: true;
+};
+
+/**
+ * The body of `PATCH /datasets/{datasetId}`: exactly one field, `collectionId`. A body
+ * without it, or with any other field, is `400`.
+ *
+ */
+export type DatasetMoveRequest = {
+  /**
+   * The collection to move the dataset into, or `null` to take it out of its collection and back to the root.
+   */
+  collectionId: string | null;
+};
+
+/**
  * A `Dataset` plus a self link. Returned by `GET /datasets/{datasetId}`.
  */
 export type DatasetWithLinks = Dataset & {
   /**
    * Presigned GET URL to the current version's stored file — see `dataFormat` for
    * which format it's actually in. Present only once the current version's status is
-   * `ready`. Long-lived (day-scale, not permanent): a DuckDB-WASM/`lastra-ts`-style
-   * reader issues HTTP range requests against it lazily over an extended viewing
-   * session, not in one shot like a browser upload.
+   * `ready`. It is time-limited, so read the dataset again for a fresh one. It is meant to
+   * last through a viewing session in which a DuckDB-WASM/`lastra-ts`-style reader issues
+   * HTTP range requests against it lazily, not just one shot like a browser upload.
    *
    */
   dataUrl?: string;
@@ -1688,8 +1857,8 @@ export type DatasetWithLinks = Dataset & {
    * Which format `dataUrl` is actually in — check this rather than assuming it
    * matches how you uploaded it. `lastra` — our native columnar format — for a CSV (or
    * gzip/zip of one) upload, always converted on ingest, or for a lastra upload,
-   * stored as-is (the value alone doesn't tell you which). `parquet` for a parquet
-   * upload, also stored as-is today.
+   * stored as it is (the value alone doesn't tell you which). `parquet` for a parquet
+   * upload, also stored as it is.
    *
    */
   dataFormat?: "lastra" | "parquet";
@@ -1757,6 +1926,10 @@ export type DatasetCreated = {
    */
   type: "ticker";
   instrument: Instrument;
+  /**
+   * The collection the dataset was created in. Present only when the request named one.
+   */
+  collectionId?: string;
 } & DatasetUploadSession;
 
 /**
@@ -1805,9 +1978,9 @@ export type DatasetVersion = {
   largestGapSteps?: number;
   /**
    * Presigned GET URL to the stored file — see `dataFormat` for which format it's in.
-   * Present once the version is `ready`. Long-lived (day-scale, not permanent): a
-   * DuckDB-WASM/`lastra-ts`-style reader issues HTTP range requests against it lazily over
-   * an extended viewing session, not in one shot like a browser upload.
+   * Present once the version is `ready`. It is time-limited, so read the dataset again for a fresh
+   * one. It is meant to last through a viewing session in which a DuckDB-WASM/`lastra-ts`-style
+   * reader issues HTTP range requests against it lazily, not just one shot like a browser upload.
    *
    */
   dataUrl?: string;
@@ -1816,7 +1989,7 @@ export type DatasetVersion = {
    * how you uploaded it. `lastra` — our native columnar format — for a CSV (or gzip/zip
    * of one) upload, always converted on ingest, or for a lastra upload, stored as-is
    * (the value alone doesn't tell you which). `parquet` for a parquet upload, also
-   * stored as-is today.
+   * stored as it is.
    *
    */
   dataFormat?: "lastra" | "parquet";
@@ -1833,7 +2006,7 @@ export type DatasetUploadState = {
   /**
    * * `uploading` — the file was PUT to the presigned URL, but `finalize` has not been
    * called yet.
-   * * `ingesting` — `finalize` was called; the worker is parsing and validating the file.
+   * * `ingesting` — `finalize` was called; the file is being parsed and validated.
    * * `ready` — ingested successfully. `version` carries the result.
    * * `failed` — ingest rejected the file (e.g. bad CSV contract, mixed timestamp units, a
    * `.zip` with no file inside or more than one).
@@ -1872,6 +2045,14 @@ export type DatasetImportRequest = {
    */
   name: string;
   instrument: Instrument;
+  /**
+   * Optional. The collection to create the dataset in; `null`, or leaving it out, creates
+   * it at the root. An id that is not one of your collections is `404`, answered before the
+   * import is queued and before anything is counted against your plan. The `202` carries
+   * `collectionId` only when you sent one.
+   *
+   */
+  collectionId?: string | null;
   /**
    * Start of the range to fetch, inclusive. Must be before `to`.
    */
@@ -1934,6 +2115,23 @@ export type DatasetImportRequest = {
   type: "dex" | "cex";
   dex?: DatasetImportDexRequest;
   cex?: DatasetImportCexRequest;
+  /**
+   * Optional. Keys of your own to keep on the dataset, returned as `meta` of the `Dataset`
+   * beside the ones the import records itself. Two namespaces are yours: `pool.*`, a note
+   * about the pool the import is for (by convention `pool.id`, `pool.name`, `pool.dex`,
+   * `pool.reserve_usd`, `pool.created_at`), and `user.*`, any label you like. A key of the
+   * platform's (`import.*`, `dex.*`, `cex.*`) or of any other namespace is `400`.
+   *
+   * A key is lower-case letters, digits and `_`, in parts separated by `.`, at most 64
+   * characters. A value is a non-empty text of at most 256 characters with no control
+   * characters. At most 16 keys, and the whole of what is kept (your keys and the ones the
+   * import adds) at most 32 keys and 4096 bytes of JSON. Anything over a limit is `400`; the
+   * import is not created. `meta` is not taken by `POST /datasets`.
+   *
+   */
+  meta?: {
+    [key: string]: string;
+  };
 };
 
 /**
@@ -1995,8 +2193,8 @@ export type DatasetImportCexRequest = {
    */
   exchange: string;
   /**
-   * The market segment, one of the exchange's `segments`. `spot` is the only segment a
-   * `cex` import takes today, which matches `instrument` being a plain spot pair.
+   * The market segment, one of the exchange's `segments`. `spot` is the segment a
+   * `cex` import takes, which matches `instrument` being a plain spot pair.
    *
    */
   segment: "spot";
@@ -2016,6 +2214,10 @@ export type DatasetImportCreated = {
    * Opaque id of the newly created dataset — same id space as `POST /datasets`.
    */
   datasetId: string;
+  /**
+   * The collection the dataset was created in. Present only when the request named one.
+   */
+  collectionId?: string;
   /**
    * Identifies this import. Pass to `GET /datasets/{datasetId}/imports/{importId}` to poll
    * it — there is no separate "finalize" step the way an upload has.
@@ -2051,7 +2253,7 @@ export type DatasetImportState = {
   /**
    * * `fetching` — reading from the source; nothing staged yet.
    * * `ingesting` — fetch complete, staged, and re-entered the same ingest chain an
-   * upload uses; the worker is parsing and validating it.
+   * upload uses; the file is being parsed and validated.
    * * `ready` — ingested successfully. `version` carries the result.
    * * `failed` — the fetch or the ingest that followed it was rejected. `error` names why.
    *
@@ -2174,19 +2376,19 @@ export type LiveSource = {
    */
   venueType: "cex" | "dex";
   /**
-   * The exchange id, as `GET /exchanges` lists it. For a `dex` source, the chain the pool is on; `robinhood` is the only one today.
+   * The exchange id, as `GET /exchanges` lists it. For a `dex` source, the chain the pool or the token is on, for example `robinhood` or `solana`.
    */
   exchange: string;
   /**
-   * The segment, as `GET /exchanges` lists it for that exchange, among its `liveSegments` (a segment with no live data is refused with `400`). For a `cex` source, the market segment (`spot` today); for a `dex` source, the protocol of the pool, `uniswap-v3` the only one today.
+   * The segment, as `GET /exchanges` lists it for that exchange, among its `liveSegments` (a segment with no live data is refused with `400`). For a `cex` source, the market segment (for example `spot`); for a `dex` source, the protocol of the pool, for example `uniswap-v3`, or on `solana` the segment `pumpfun`, which follows a token by its mint.
    */
   segment: string;
   /**
-   * Both `ticker` and `kline` connect to the lightest (fastest) cadence available for the exchange — today, 1 tick/second on every supported exchange. Choosing a specific cadence is not offered yet. A `dex` source supports only `kline`: one candle per second of the pool's trades.
+   * Both `ticker` and `kline` connect to the lightest (fastest) cadence available for the exchange. Choosing a specific cadence is not offered. A `dex` source supports only `kline`: one candle per second of the pool's trades.
    */
   type: "ticker" | "kline";
   /**
-   * The instruments the run reads. For a run started with a list, that list as sent; for one started without `instruments`, or with `["*"]`, what the start resolved: the list of pairs the compilation of the strategy records as the instruments it accepts, when it records one, or `["*"]` for every instrument the exchange/segment offers (tier-gated). An entry is written `BASE/QUOTE` and either side can be `*` to mean any, such as any base paired with USDT. Symbols are not case-sensitive and spaces around them are ignored, so `btc/usdt` and `BTC/USDT` are the same instrument. A `dex` source holds exactly one entry, the address of its pool.
+   * The instruments the run reads. For a run started with a list, that list as sent; for one started without `instruments`, or with `["*"]`, what the start resolved: the list of pairs the compilation of the strategy records as the instruments it accepts, when it records one, or `["*"]` for every instrument the exchange/segment offers (tier-gated). An entry is written `BASE/QUOTE` and either side can be `*` to mean any, such as any base paired with USDT. Symbols are not case-sensitive and spaces around them are ignored, so `btc/usdt` and `BTC/USDT` are the same instrument. A `dex` source holds exactly one entry: the address of its pool or, on `solana`, the mint of its token.
    */
   instruments: Array<string>;
 };
@@ -2200,19 +2402,19 @@ export type LiveSourceRequest = {
    */
   venueType: "cex" | "dex";
   /**
-   * The exchange id, as `GET /exchanges` lists it. For a `dex` source, the chain the pool is on; `robinhood` is the only one today.
+   * The exchange id, as `GET /exchanges` lists it. For a `dex` source, the chain the pool or the token is on, for example `robinhood` or `solana`.
    */
   exchange: string;
   /**
-   * The segment, as `GET /exchanges` lists it for that exchange, among its `liveSegments` (a segment with no live data is refused with `400`). For a `cex` source, the market segment (`spot` today); for a `dex` source, the protocol of the pool, `uniswap-v3` the only one today.
+   * The segment, as `GET /exchanges` lists it for that exchange, among its `liveSegments` (a segment with no live data is refused with `400`). For a `cex` source, the market segment (for example `spot`); for a `dex` source, the protocol of the pool, for example `uniswap-v3`, or on `solana` the segment `pumpfun`, which follows a token by its mint.
    */
   segment: string;
   /**
-   * Both `ticker` and `kline` connect to the lightest (fastest) cadence available for the exchange — today, 1 tick/second on every supported exchange. Choosing a specific cadence is not offered yet. A `dex` source supports only `kline`: one candle per second of the pool's trades.
+   * Both `ticker` and `kline` connect to the lightest (fastest) cadence available for the exchange. Choosing a specific cadence is not offered. A `dex` source supports only `kline`: one candle per second of the pool's trades.
    */
   type: "ticker" | "kline";
   /**
-   * Which instruments the run reads. A QTScript strategy can declare which instruments it accepts with an `instruments` line in its source. When the compilation of the strategy records that selection as a list of pairs, leaving `instruments` out, or sending `["*"]`, takes that list; otherwise the run reads every instrument the exchange/segment offers. A list of instruments is taken as sent, and `[]` and `null` are refused with `400`. An entry is written `BASE/QUOTE`; either side can be `*` to mean any: any base can be paired with USDT, and BTC can be paired with any quote. Entries are not case-sensitive and spaces around them are ignored, so `btc/usdt` and `BTC/USDT` are the same instrument. An entry that is not of that form (no `/`, an empty side, a `.` or a space inside a side, or a `*` mixed with other characters of a side) makes the run fail when it starts. Plan limits: a list with an entry that has a `*` on a side counts like `["*"]` and only plans that include the wildcard accept it; the other entries are counted one by one. The instruments the run actually reads come back in the run's `sources`. A `dex` source needs exactly one entry, the address of its pool (`0x` and 40 hexadecimal digits, not case-sensitive): it cannot be left out and `*` is not accepted.
+   * Which instruments the run reads. A QTScript strategy can declare which instruments it accepts with an `instruments` line in its source. When the compilation of the strategy records that selection as a list of pairs, leaving `instruments` out, or sending `["*"]`, takes that list; otherwise the run reads every instrument the exchange/segment offers. A list of instruments is taken as sent, and `[]` and `null` are refused with `400`. An entry is written `BASE/QUOTE`; either side can be `*` to mean any: any base can be paired with USDT, and BTC can be paired with any quote. Entries are not case-sensitive and spaces around them are ignored, so `btc/usdt` and `BTC/USDT` are the same instrument. An entry that is not of that form (no `/`, an empty side, a `.` or a space inside a side, or a `*` mixed with other characters of a side) makes the run fail when it starts. Plan limits: a list with an entry that has a `*` on a side counts like `["*"]` and only plans that include the wildcard accept it; the other entries are counted one by one. The instruments the run actually reads come back in the run's `sources`. A `dex` source needs exactly one entry: the address of its pool (`0x` and 40 hexadecimal digits, not case-sensitive) or, on `solana`, the mint of its token (a base58 key of 32 to 44 characters, case-sensitive: write it as the token has it). It cannot be left out and `*` is not accepted.
    */
   instruments?: Array<string>;
 };
@@ -2227,6 +2429,10 @@ export type AttachLiveSourceRequest = {
    * A string of yours. Sending the same `ref` to the same run answers the attachment it already made instead of making another one.
    */
   ref?: string;
+  /**
+   * For a `dex` pool. `true`: the strategy is told of the source, with the pair the pool's candles carry, when the pool delivers its first candle. `false`: it is told at once, with a stand-in instrument made of the pool's address and `<exchange>:<segment>`. A centralized exchange's source accepts the field and ignores it. See "The instrument of a pool" in the Live execution guide.
+   */
+  resolveInstrument?: boolean;
 };
 
 export type LiveAttachmentAccepted = {
@@ -2252,6 +2458,10 @@ export type LiveAttachment = {
    */
   warmFrom?: number;
   /**
+   * The value in effect for this source: how the strategy is told of a `dex` pool. See "The instrument of a pool" in the Live execution guide.
+   */
+  resolveInstrument?: boolean;
+  /**
    * The `ref` it was attached with, when there was one.
    */
   ref?: string;
@@ -2260,7 +2470,7 @@ export type LiveAttachment = {
    */
   state: string;
   /**
-   * Why it is `DETACHED` or `REFUSED`, when there is something to say: `OWNER` (you detached it), `REFUSED` (the platform refused it), `POOL_GONE` (a `dex` pool stopped being followed), `CAPACITY` (the platform has no room to follow it) or `NO_DATA` (an instrument of a centralized exchange that the platform does not capture sent nothing for five minutes). The set may grow.
+   * Why it is `DETACHED` or `REFUSED`, when there is something to say: `OWNER` (you detached it), `REFUSED` (the platform refused it), `POOL_GONE` (a `dex` pool stopped being followed), `CAPACITY` (the platform has no room to follow it), `STRATEGY` (the strategy asked for it) or `NO_DATA` (an instrument of a centralized exchange that the platform does not capture sent nothing for five minutes). The set may grow.
    */
   reason?: string;
   /**
@@ -2316,9 +2526,8 @@ export type StartLiveRequest = {
    * How many seconds before the run's start to replay the market feed from, so the strategy's indicators and
    * windows have history when its first live tick arrives. `0` replays nothing: the run delivers its first
    * signal as soon as it is running, but its indicators start empty and the first bar of a window can be
-   * partial. Omitted, the platform replays from the start of the current 15-minute block: between 0 and 900
-   * seconds before the run's start, depending on when it starts (0 if it starts exactly on a quarter hour),
-   * so the first bar of a 15-minute window is complete. The value in effect, the one you sent or the one the
+   * partial. Omitted, the platform chooses how far back to replay,
+   * so that the first bar of the usual windows is complete. The value in effect, the one you sent or the one the
    * platform chose, is reported back as `warmFrom` on the run. Signals about the replayed time
    * are not pushed on the run's channel or stream: they describe events from before the run started.
    * It can be set **only when the run is started**: it is not a parameter of `PUT /live/{runId}/params`, and
@@ -2385,7 +2594,7 @@ export type LivePaperConfig = {
    */
   output?: "separate" | "mix";
   /**
-   * How the run's accounts are split, fixed when it starts. `currency` (the default) is one shared account per quote currency: every instrument of a currency draws on the same balance, as on a venue with one wallet per asset. `instrument` is one isolated account per instrument, each a simulation of that instrument alone with its own `initialFunding`, which is what makes it comparable with a backtest of the instrument but less realistic, since a venue has one wallet per asset and not one per pair. It needs the instruments of the run named: a wildcard is refused, on every plan.
+   * How the run's accounts are split, fixed when it starts. `currency` (the default) is one shared account per quote currency: every instrument of a currency draws on the same balance, as on a venue with one wallet per asset. `instrument` is one isolated account per instrument, each a simulation of that instrument alone with its own `initialFunding`, which is what makes it comparable with a backtest of the instrument but less realistic, since a venue has one wallet per asset and not one per pair. It needs the instruments of the run named: a wildcard is refused, on every plan, at start and in every source attached afterwards.
    */
   accounts?: "currency" | "instrument";
 };
@@ -2435,7 +2644,7 @@ export type LiveRun = {
    */
   stage: "SANDBOX" | "LIVE";
   /**
-   * The run's health right now: `STARTING` (no runner has reported on it yet), `WAITING` (running with no market-data source attached: it holds no place on the platform until you attach one), `RUNNING`, `LAGGING` (behind the market data, usually while catching up; clears by itself), `HUNG` (stuck inside one strategy call for longer than allowed; clears when it returns), `DEGRADED` (its independent executions produced different signals), `FAILED` (refused, could not start or failed while running; `reason` says why) or `STOPPED`. `LAGGING`, `HUNG` and `DEGRADED` come and go on a running run. The set may grow: read an unknown value as a running run with something to look at. See the Live execution guide.
+   * The run's health right now: `STARTING` (the platform has not reported on it yet), `WAITING` (running with no market-data source attached: it holds no place on the platform until you attach one), `RUNNING`, `LAGGING` (behind the market data, usually while catching up; clears by itself), `HUNG` (stuck inside one strategy call for longer than allowed; clears when it returns), `DEGRADED` (its independent executions produced different signals), `FAILED` (refused, could not start or failed while running; `reason` says why) or `STOPPED`. `LAGGING`, `HUNG` and `DEGRADED` come and go on a running run. The set may grow: read an unknown value as a running run with something to look at. See the Live execution guide.
    */
   state: string;
   /**
@@ -2502,7 +2711,7 @@ export type LiveRun = {
 };
 
 /**
- * What a run has been doing, as of its last snapshot. The platform refreshes it about once a minute
+ * What a run has been doing, as of its last snapshot. The platform refreshes it periodically
  * while the run is being executed, so `opsPerSecond` is an average over that interval, not an
  * instantaneous rate.
  *
@@ -2533,7 +2742,7 @@ export type LiveRunStats = {
   progressedAtMs?: number;
   /**
    * `true` when the run is meant to be running (`desired` is `RUNNING`) and its counters have not
-   * been refreshed for several refresh intervals: the platform has stopped updating them, which is
+   * been refreshed for much longer than they usually are: the platform has stopped updating them, which is
    * worth checking against `state`. `false` otherwise. A run whose `processed` is flat is not stale;
    * `progressedAtMs` is how to tell it apart.
    *
@@ -2542,7 +2751,7 @@ export type LiveRunStats = {
 };
 
 /**
- * The `warmFrom` in effect for this run, in seconds: the one requested when the run was started or, when none was, the one the platform chose (the distance from the run's start back to the start of the current 15-minute block, 0 to 900). It is never `null`. It is present on every run started since the field exists and absent from a run started before it existed. It never changes while the run exists.
+ * The `warmFrom` in effect for this run, in seconds: the one requested when the run was started or, when none was, the one the platform chose. It is never `null`. It is present on every run started since the field exists and absent from a run started before it existed. It never changes while the run exists.
  */
 export type WarmFrom = number;
 
@@ -2634,7 +2843,7 @@ export type LiveRunSummary = {
    */
   stage: "SANDBOX" | "LIVE";
   /**
-   * The run's health right now: `STARTING` (no runner has reported on it yet), `WAITING` (running with no market-data source attached: it holds no place on the platform until you attach one), `RUNNING`, `LAGGING` (behind the market data, usually while catching up; clears by itself), `HUNG` (stuck inside one strategy call for longer than allowed; clears when it returns), `DEGRADED` (its independent executions produced different signals), `FAILED` (refused, could not start or failed while running; `reason` says why) or `STOPPED`. `LAGGING`, `HUNG` and `DEGRADED` come and go on a running run. The set may grow: read an unknown value as a running run with something to look at. See the Live execution guide.
+   * The run's health right now: `STARTING` (the platform has not reported on it yet), `WAITING` (running with no market-data source attached: it holds no place on the platform until you attach one), `RUNNING`, `LAGGING` (behind the market data, usually while catching up; clears by itself), `HUNG` (stuck inside one strategy call for longer than allowed; clears when it returns), `DEGRADED` (its independent executions produced different signals), `FAILED` (refused, could not start or failed while running; `reason` says why) or `STOPPED`. `LAGGING`, `HUNG` and `DEGRADED` come and go on a running run. The set may grow: read an unknown value as a running run with something to look at. See the Live execution guide.
    */
   state: string;
   /**
@@ -2945,11 +3154,11 @@ export type LiveSignal = {
    */
   paramsVersion?: number;
   /**
-   * `paper` items appear only for a run whose `paper.output` is `mix`; they are not relayed over the WebSocket channel.
+   * `paper` items appear only for a run whose `paper.output` is `mix`; they are not relayed over the WebSocket channel. `system` is what a strategy tells the platform that runs it, today a request to detach a source (see "A strategy that leaves a source" in the Live execution guide): `GET /live/{runId}/signals` returns it only when `type` asks for it, and the WebSocket channel never carries it.
    */
-  type: "hint" | "info" | "marker" | "command" | "paper";
+  type: "hint" | "info" | "marker" | "command" | "paper" | "system";
   /**
-   * `BUY`/`SELL` for a `hint`, the command name for a `command`; for `paper`, what the item is: `fill`, `trade`, `equity`, `mark`, `kpi` or `gap`. Absent otherwise.
+   * `BUY`/`SELL` for a `hint`, the command name for a `command`, `DETACH` for a `system`; for `paper`, what the item is: `fill`, `trade`, `equity`, `mark`, `kpi` or `gap`. Absent otherwise.
    */
   kind?: string | null;
   /**
@@ -2985,6 +3194,10 @@ export type LiveSignalInstrument = {
   exchange?: string;
   segment?: string;
   /**
+   * For a `dex` run, the contract the signal is about: the address of the pool, or the mint of the token, as `GET /exchange/{exchange}/{segment}/instruments` lists a pool's `id`. `symbol` is the pair as the candles name it, and a symbol does not identify a token, since another can be issued under the same one, so act on `id`. Absent for the instrument of a centralized exchange.
+   */
+  id?: string;
+  /**
    * Slashed form, e.g. `BTC/USDT`.
    */
   symbol?: string;
@@ -3013,9 +3226,9 @@ export type LiveParamsUpdateResult = {
   runId: string;
   paramsVersion: number;
   /**
-   * Epoch milliseconds — the earliest moment the new values are guaranteed to be in effect.
+   * Epoch milliseconds — the earliest moment the new values are guaranteed to be in effect. Absent when the run reads no source (`state: WAITING`): it applies nothing at a moment, and starts with the new values when its first source is attached.
    */
-  effectiveAtMs: number;
+  effectiveAtMs?: number;
 };
 
 export type LiveCommandResult = {
@@ -3029,6 +3242,352 @@ export type LiveCommandResult = {
    */
   effectiveAtMs: number;
 };
+
+export type SignalChannelRequest = {
+  /**
+   * The name subscribers see. Your own user is never shown.
+   */
+  name: string;
+  description?: string;
+  /**
+   * `unlisted`: found only by its `channelId`. `public`: also listed in `GET /signals/channels/public`.
+   */
+  visibility?: "unlisted" | "public";
+};
+
+export type UpdateSignalChannelRequest = {
+  name?: string;
+  description?: string;
+  visibility?: "unlisted" | "public";
+  /**
+   * `true` replaces `webhookUrl` with a new address; the old one stops publishing at once.
+   */
+  rotateWebhook?: boolean;
+};
+
+/**
+ * A signal channel. `webhookUrl` and `subscriptions` are present only for its owner, and so are the ids and counts of its `offers`.
+ */
+export type SignalChannel = {
+  channelId: string;
+  name: string;
+  description?: string;
+  visibility: "unlisted" | "public";
+  /**
+   * The delays of its offers, in seconds, smallest first, each once.
+   */
+  delays: Array<number>;
+  /**
+   * What the channel sells, oldest first.
+   */
+  offers?: Array<SignalOffer>;
+  createdAtMs: number;
+  /**
+   * Owner only. The secret address that publishes a notice without a token (`POST /signals/hook/{hookKey}`).
+   */
+  webhookUrl?: string;
+  /**
+   * Owner only. How many subscriptions are active and not expired. Who holds them is never shown.
+   */
+  subscriptions?: number;
+};
+
+export type SignalChannelList = {
+  channels: Array<SignalChannel>;
+};
+
+export type PublicSignalChannelPage = {
+  channels: Array<SignalChannel>;
+  _links?: PublicLiveListLinks;
+};
+
+/**
+ * The instrument a notice is about: `LiveSourceRequest` without `type`, which is the subscription's to say, and with the instruments named one by one.
+ */
+export type SignalNoticeSource = {
+  venueType: "cex" | "dex";
+  /**
+   * As in `LiveSourceRequest`.
+   */
+  exchange: string;
+  /**
+   * As in `LiveSourceRequest`.
+   */
+  segment: string;
+  /**
+   * For a `cex` source, 1 to 10 pairs written `BASE/QUOTE`, with no `*`. For a `dex` source, exactly one entry, the address of the pool or, on `solana`, the mint of the token (case-sensitive).
+   */
+  instruments: Array<string>;
+};
+
+export type SignalNoticeRequest = {
+  source: SignalNoticeSource;
+  /**
+   * A string of yours. Sending the same `ref` to the same channel answers the notice it already made.
+   */
+  ref?: string;
+  /**
+   * Seconds the notice is worth acting on. A delivery not made by then is `EXPIRED`.
+   */
+  expiresIn?: number;
+  /**
+   * Anything else you want subscribers to read with the notice, as text: up to 16 entries, each key lower case (letters, digits, `_`, parts separated by `.`, up to 64 characters) and each value 1 to 256 characters with no control characters. It is shown with the delivery; it does not reach the strategy.
+   */
+  data?: {
+    [key: string]: string;
+  };
+};
+
+export type SignalNoticeAccepted = {
+  noticeId: string;
+  /**
+   * How many subscriptions the notice goes to.
+   */
+  deliveries: number;
+  receivedAtMs: number;
+  expiresAtMs: number;
+};
+
+/**
+ * How the deliveries of a notice stand, by status (see `SignalDelivery`).
+ */
+export type SignalDeliveryCounts = {
+  pending: number;
+  attached: number;
+  refused: number;
+  expired: number;
+  skipped: number;
+};
+
+export type SignalNotice = {
+  noticeId: string;
+  ref?: string;
+  source: SignalNoticeSource;
+  data?: {
+    [key: string]: string;
+  };
+  receivedAtMs: number;
+  expiresAtMs: number;
+  deliveries: SignalDeliveryCounts;
+};
+
+export type SignalNoticePage = {
+  notices: Array<SignalNotice>;
+  _links?: PublicLiveListLinks;
+};
+
+export type SignalOfferRequest = {
+  /**
+   * Seconds after a notice is published that it reaches the runs of a subscription of this offer.
+   */
+  delay: number;
+  /**
+   * How many of the buyer's runs one subscription feeds at once.
+   */
+  maxRuns: number;
+  /**
+   * How long a subscription lasts from the moment its code is redeemed, and what a renewal adds. Left out, it does not expire.
+   */
+  durationDays?: number;
+  /**
+   * Where you sell it, shown with the channel. `https` only.
+   */
+  purchaseUrl?: string;
+};
+
+/**
+ * What a channel sells. `offerId`, `createdAtMs`, `codes`, `subscriptions` and `runs` are present only for the channel's owner.
+ */
+export type SignalOffer = {
+  offerId?: string;
+  delay: number;
+  maxRuns: number;
+  /**
+   * Absent when a subscription of this offer does not expire.
+   */
+  durationDays?: number;
+  purchaseUrl?: string;
+  createdAtMs?: number;
+  codes?: {
+    minted?: number;
+    redeemed?: number;
+  };
+  /**
+   * Subscriptions of this offer active and not expired now.
+   */
+  subscriptions?: number;
+  /**
+   * Runs those subscriptions feed now.
+   */
+  runs?: number;
+};
+
+export type SignalOfferList = {
+  offers: Array<SignalOffer>;
+};
+
+export type SignalCodesRequest = {
+  count: number;
+};
+
+/**
+ * The codes just minted, in clear. They are not shown again.
+ */
+export type SignalMintedCodes = {
+  codes: Array<MintedSignalCode>;
+};
+
+export type MintedSignalCode = {
+  codeId: string;
+  /**
+   * The code to hand to the buyer. Keep it secret until then.
+   */
+  code: string;
+  /**
+   * Its first characters, as `GET /signals/offers/{offerId}/codes` shows it.
+   */
+  prefix: string;
+};
+
+export type SignalCode = {
+  codeId: string;
+  prefix: string;
+  /**
+   * `UNUSED`, `REDEEMED` or `REVOKED`. Who redeemed it is never shown.
+   */
+  state: string;
+  createdAtMs: number;
+  redeemedAtMs?: number;
+};
+
+export type SignalCodeList = {
+  codes: Array<SignalCode>;
+};
+
+export type SignalCodeRedemption = {
+  /**
+   * The code you bought.
+   */
+  code: string;
+};
+
+export type SignalSubscriptionRunRequest = {
+  /**
+   * One of your live runs.
+   */
+  runId: string;
+  /**
+   * How the run reads a centralized exchange's instrument; one its strategy consumes. A pool is always read as `kline`.
+   */
+  type?: "ticker" | "kline";
+  /**
+   * Seconds of warm-up of each attachment a delivery makes, as for `POST /live/{runId}/attachments`.
+   */
+  warmFrom?: number;
+  /**
+   * As for `POST /live/{runId}/attachments`, for each pool a delivery attaches. For a `dex` pool. `true`: the strategy is told of the source, with the pair the pool's candles carry, when the pool delivers its first candle. `false`: it is told at once, with a stand-in instrument made of the pool's address and `<exchange>:<segment>`. A centralized exchange's source accepts the field and ignores it. See "The instrument of a pool" in the Live execution guide.
+   */
+  resolveInstrument?: boolean;
+};
+
+export type SignalSubscriptionRun = {
+  runId: string;
+  type: "ticker" | "kline";
+  warmFrom: number;
+  resolveInstrument?: boolean;
+  createdAtMs: number;
+};
+
+/**
+ * What you bought by redeeming a code, and the runs it feeds now.
+ */
+export type SignalSubscription = {
+  subscriptionId: string;
+  channelId: string;
+  channelName?: string;
+  /**
+   * Seconds after a notice is published that it reaches your runs.
+   */
+  delay: number;
+  /**
+   * How many of your runs it feeds at once.
+   */
+  maxRuns: number;
+  /**
+   * When it expires. Absent when it does not.
+   */
+  expiresAtMs?: number;
+  /**
+   * `ACTIVE`, `EXPIRED` (past `expiresAtMs`: it feeds nothing until renewed), `REVOKED` (the provider revoked its code) or `ENDED` (you cancelled it, or the channel was deleted). The set may grow.
+   */
+  state: string;
+  /**
+   * Where its offer is sold, to renew it.
+   */
+  purchaseUrl?: string;
+  runs: Array<SignalSubscriptionRun>;
+  createdAtMs: number;
+};
+
+export type SignalSubscriptionList = {
+  subscriptions: Array<SignalSubscription>;
+};
+
+/**
+ * One notice due to one run a subscription feeds, and what its delivery did. Until `dueAtMs` it says that a notice is coming and when, not what it is about: `source` and `data` are present from `dueAtMs` on.
+ */
+export type SignalDelivery = {
+  noticeId: string;
+  /**
+   * The run the delivery is for.
+   */
+  runId?: string;
+  /**
+   * The notice's instrument. Present from `dueAtMs` on.
+   */
+  source?: SignalNoticeSource;
+  /**
+   * The notice's text. Present from `dueAtMs` on.
+   */
+  data?: {
+    [key: string]: string;
+  };
+  receivedAtMs: number;
+  /**
+   * When the notice was due to this subscription, its publication plus the subscription's `delay`.
+   */
+  dueAtMs: number;
+  /**
+   * `PENDING`, `ATTACHED`, `REFUSED`, `EXPIRED` or `SKIPPED` (see `GET /signals/subscriptions/{subscriptionId}/deliveries`). The set may grow.
+   */
+  status: string;
+  /**
+   * Why it is `REFUSED` or `SKIPPED`. `REFUSED`: `PLAN_LIMIT` (a limit of your plan: the instruments a run may read, the pools you may follow at once, the runs you may have reading at once), `PLAN_REQUIRED` (your plan no longer includes live runs or subscriptions), `OTHER_FEED` (the run reads another market feed), `NOT_ACCEPTED` (the run's strategy does not accept that instrument or `type`) or `CAPACITY` (the platform had no room). `SKIPPED`: `NOT_RUNNING`, `UNSUBSCRIBED` (the run is no longer fed, or the subscription was cancelled), `ACCESS_REVOKED` (the provider revoked the code), `SUBSCRIPTION_EXPIRED` or `CHANNEL_DELETED`. The set may grow.
+   */
+  reason?: string;
+  /**
+   * A sentence saying more about a `REFUSED` delivery. Do not parse it.
+   */
+  message?: string;
+  /**
+   * The attachment the delivery made, when it is `ATTACHED`.
+   */
+  attachmentId?: string;
+  /**
+   * When the delivery was made, or refused.
+   */
+  deliveredAtMs?: number;
+};
+
+export type SignalDeliveryPage = {
+  deliveries: Array<SignalDelivery>;
+  _links?: PublicLiveListLinks;
+};
+
+/**
+ * The id returned by `POST /collections`
+ */
+export type CollectionId = string;
 
 export type AuthenticateData = {
   body?: never;
@@ -3047,7 +3606,7 @@ export type AuthenticateErrors = {
    */
   401: AuthTokenRejected;
   /**
-   * The API key is valid but carries no scopes, and this deployment requires them.
+   * The API key is valid but carries no scopes.
    */
   403: AuthTokenError;
   /**
@@ -3260,7 +3819,7 @@ export type DownloadTickersData = {
 export type DownloadTickersErrors = {
   /**
    * Missing or malformed parameters (e.g. `hour` not `YYYY-MM-DDTHH`), an `hour` in the
-   * future, or an hour older than the last 7 days (`reason: OUTSIDE_WINDOW`, with `next`).
+   * future, or an hour older than the hours the route serves (`reason: OUTSIDE_WINDOW`, with `next`).
    *
    */
   400: ResponseError;
@@ -3346,7 +3905,7 @@ export type DownloadKlinesData = {
 export type DownloadKlinesErrors = {
   /**
    * Missing or malformed parameters (e.g. `hour` not `YYYY-MM-DDTHH`), an `hour` in the
-   * future, or an hour older than the last 7 days (`reason: OUTSIDE_WINDOW`, with `next`).
+   * future, or an hour older than the hours the route serves (`reason: OUTSIDE_WINDOW`, with `next`).
    *
    */
   400: ResponseError;
@@ -3482,6 +4041,8 @@ export type CompileStrategyResponses = {
    */
   200: {
     strategyId: StrategyId;
+    name?: StrategyName;
+    language?: StrategyLanguage;
     /**
      * What could be established about this strategy's sweep-key vocabulary without
      * constructing it. See `DeclaredProperty` — best-effort, not exhaustive.
@@ -3745,9 +4306,9 @@ export type PrepareBacktestErrors = {
    */
   404: ResponseError;
   /**
-   * Rate limited. Returned when the global queue exceeds capacity or the user has too many
+   * Rate limited. Returned when the platform is at capacity or the user has too many
    * active backtests. Does not apply to `exchangeId: user` — a dataset prepare reads an
-   * already-ingested file rather than enqueueing worker capacity.
+   * already-ingested file rather than using platform capacity.
    *
    */
   429: ResponseError;
@@ -3870,7 +4431,7 @@ export type ExecuteSweepErrors = {
    */
   409: ResponseError;
   /**
-   * Sweep queue or user concurrency limit reached.
+   * Sweep capacity or user concurrency limit reached.
    */
   429: ResponseError;
 };
@@ -4104,7 +4665,7 @@ export type ExecuteBacktestData = {
     prepareJobId: string;
     strategyId: StrategyId;
     /**
-     * When true, the worker uploads emitted signals to object storage and the
+     * When true, the emitted signals are stored and the
      * response includes `signalsUrl` / `signalsId` fields. Defaults to false.
      *
      */
@@ -4193,7 +4754,7 @@ export type ExecuteBacktestErrors = {
    */
   409: ResponseError;
   /**
-   * Rate limited (global queue at capacity or per-user limit reached)
+   * Rate limited (the platform is at capacity or a per-user limit was reached)
    */
   429: ResponseError;
 };
@@ -4333,11 +4894,23 @@ export type ListDatasetsData = {
      *
      */
     includeDeleted?: boolean;
+    /**
+     * Lists only the datasets of one collection: pass its id. `none` lists the datasets that
+     * are in no collection, the root. Leave it out to list every dataset, wherever it is. It
+     * combines with `includeDeleted`. An id that is not one of your collections is `404`
+     * rather than an empty list; an empty value is `400`.
+     *
+     */
+    collectionId?: string;
   };
   url: "/datasets";
 };
 
 export type ListDatasetsErrors = {
+  /**
+   * `collectionId` is present but empty
+   */
+  400: ResponseError;
   /**
    * The API key behind the token does not carry the scope this operation needs; `required` names
    * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
@@ -4346,6 +4919,12 @@ export type ListDatasetsErrors = {
    *
    */
   403: InsufficientScopeError;
+  /**
+   * No such collection for this user. A collection that is not yours is answered exactly as one
+   * that does not exist, and the message names the collection.
+   *
+   */
+  404: ResponseError;
 };
 
 export type ListDatasetsError = ListDatasetsErrors[keyof ListDatasetsErrors];
@@ -4372,6 +4951,13 @@ export type CreateDatasetData = {
      */
     name: string;
     instrument: Instrument;
+    /**
+     * Optional. The collection to create the dataset in; `null`, or leaving it out,
+     * creates it at the root. An id that is not one of your collections is `404`, and
+     * nothing is created. The `201` carries `collectionId` only when you sent one.
+     *
+     */
+    collectionId?: string | null;
   };
   path?: never;
   query?: never;
@@ -4380,7 +4966,7 @@ export type CreateDatasetData = {
 
 export type CreateDatasetErrors = {
   /**
-   * Invalid request, or `instrument` is not a plain spot pair
+   * Invalid request, `instrument` is not a plain spot pair, or `collectionId` is not a text
    */
   400: ResponseError;
   /**
@@ -4391,6 +4977,12 @@ export type CreateDatasetErrors = {
    *
    */
   403: InsufficientScopeError;
+  /**
+   * No such collection for this user. A collection that is not yours is answered exactly as one
+   * that does not exist, and the message names the collection.
+   *
+   */
+  404: ResponseError;
   /**
    * You already have a dataset with this `name`
    */
@@ -4492,6 +5084,279 @@ export type GetDatasetResponses = {
 };
 
 export type GetDatasetResponse = GetDatasetResponses[keyof GetDatasetResponses];
+
+export type MoveDatasetData = {
+  body: DatasetMoveRequest;
+  path: {
+    /**
+     * The id returned by `POST /datasets`
+     */
+    datasetId: string;
+  };
+  query?: never;
+  url: "/datasets/{datasetId}";
+};
+
+export type MoveDatasetErrors = {
+  /**
+   * The request has no body, `collectionId` is missing, is not a text or `null`, or is
+   * empty, or the body has any other field.
+   *
+   */
+  400: ResponseError;
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
+   * No such dataset for this user, or it is deleted; or `collectionId` is not one of your
+   * collections (the message then names the collection).
+   *
+   */
+  404: ResponseError;
+  /**
+   * The request body is too large. Every endpoint that reads a request body caps it, and the message names the cap.
+   */
+  413: ResponseError;
+};
+
+export type MoveDatasetError = MoveDatasetErrors[keyof MoveDatasetErrors];
+
+export type MoveDatasetResponses = {
+  /**
+   * The dataset, now in the collection (no `collectionId` when it is at the root)
+   */
+  200: DatasetWithLinks;
+};
+
+export type MoveDatasetResponse =
+  MoveDatasetResponses[keyof MoveDatasetResponses];
+
+export type ListCollectionsData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/collections";
+};
+
+export type ListCollectionsErrors = {
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+};
+
+export type ListCollectionsError =
+  ListCollectionsErrors[keyof ListCollectionsErrors];
+
+export type ListCollectionsResponses = {
+  /**
+   * Your collections
+   */
+  200: CollectionList;
+};
+
+export type ListCollectionsResponse =
+  ListCollectionsResponses[keyof ListCollectionsResponses];
+
+export type CreateCollectionData = {
+  body: CollectionCreateRequest;
+  path?: never;
+  query?: never;
+  url: "/collections";
+};
+
+export type CreateCollectionErrors = {
+  /**
+   * The request has no body, `name` is missing, blank or longer than allowed, or
+   * `description` is longer than allowed.
+   *
+   */
+  400: ResponseError;
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
+   * You already have a collection with this `name`
+   */
+  409: ResponseError;
+  /**
+   * The request body is too large. Every endpoint that reads a request body caps it, and the message names the cap.
+   */
+  413: ResponseError;
+  /**
+   * You already have as many collections as an account can keep: `reason: COLLECTIONS_LIMIT`.
+   * Delete a collection to make room. It is a limit of the platform, not of a plan, so
+   * changing plan does not lift it. `retryable` is `false` and there is no `Retry-After`.
+   *
+   */
+  429: ResponseError;
+};
+
+export type CreateCollectionError =
+  CreateCollectionErrors[keyof CreateCollectionErrors];
+
+export type CreateCollectionResponses = {
+  /**
+   * Collection created
+   */
+  201: Collection;
+};
+
+export type CreateCollectionResponse =
+  CreateCollectionResponses[keyof CreateCollectionResponses];
+
+export type DeleteCollectionData = {
+  body?: never;
+  path: {
+    /**
+     * The id returned by `POST /collections`
+     */
+    collectionId: string;
+  };
+  query?: never;
+  url: "/collections/{collectionId}";
+};
+
+export type DeleteCollectionErrors = {
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
+   * No such collection for this user. A collection that is not yours is answered exactly as one
+   * that does not exist, and the message names the collection.
+   *
+   */
+  404: ResponseError;
+};
+
+export type DeleteCollectionError =
+  DeleteCollectionErrors[keyof DeleteCollectionErrors];
+
+export type DeleteCollectionResponses = {
+  /**
+   * Deleted
+   */
+  200: CollectionDeleted;
+};
+
+export type DeleteCollectionResponse =
+  DeleteCollectionResponses[keyof DeleteCollectionResponses];
+
+export type GetCollectionData = {
+  body?: never;
+  path: {
+    /**
+     * The id returned by `POST /collections`
+     */
+    collectionId: string;
+  };
+  query?: never;
+  url: "/collections/{collectionId}";
+};
+
+export type GetCollectionErrors = {
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
+   * No such collection for this user. A collection that is not yours is answered exactly as one
+   * that does not exist, and the message names the collection.
+   *
+   */
+  404: ResponseError;
+};
+
+export type GetCollectionError = GetCollectionErrors[keyof GetCollectionErrors];
+
+export type GetCollectionResponses = {
+  /**
+   * The collection
+   */
+  200: Collection;
+};
+
+export type GetCollectionResponse =
+  GetCollectionResponses[keyof GetCollectionResponses];
+
+export type UpdateCollectionData = {
+  body: CollectionUpdateRequest;
+  path: {
+    /**
+     * The id returned by `POST /collections`
+     */
+    collectionId: string;
+  };
+  query?: never;
+  url: "/collections/{collectionId}";
+};
+
+export type UpdateCollectionErrors = {
+  /**
+   * The request has no body, neither `name` nor `description` is in it, `name` is `null`,
+   * blank or longer than allowed, or `description` is longer than allowed.
+   *
+   */
+  400: ResponseError;
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
+   * No such collection for this user. A collection that is not yours is answered exactly as one
+   * that does not exist, and the message names the collection.
+   *
+   */
+  404: ResponseError;
+  /**
+   * You already have another collection with this `name`
+   */
+  409: ResponseError;
+  /**
+   * The request body is too large. Every endpoint that reads a request body caps it, and the message names the cap.
+   */
+  413: ResponseError;
+};
+
+export type UpdateCollectionError =
+  UpdateCollectionErrors[keyof UpdateCollectionErrors];
+
+export type UpdateCollectionResponses = {
+  /**
+   * The collection, updated
+   */
+  200: Collection;
+};
+
+export type UpdateCollectionResponse =
+  UpdateCollectionResponses[keyof UpdateCollectionResponses];
 
 export type OpenDatasetUploadData = {
   body?: never;
@@ -4657,10 +5522,11 @@ export type ImportDatasetData = {
 export type ImportDatasetErrors = {
   /**
    * Invalid request; `instrument` isn't a plain spot pair; `from >= to`; `cadence` present
-   * but not one of its supported values; a candle import whose `from` is earlier than the
+   * but not one of its supported values; `meta` is not an object of text, carries a key of
+   * the platform's or outside `pool.*`/`user.*`, or is over one of its limits; a candle import whose `from` is earlier than the
    * history candles reach back; the requested range exceeds your tier's import
    * range ceiling; the requested range's rough size estimate exceeds your tier's row limit;
-   * `dex.network`/`dex.id` not one of their supported values; `dex.contract`/`dex.factory`
+   * `collectionId` is not a text; `dex.network`/`dex.id` not one of their supported values; `dex.contract`/`dex.factory`
    * fail basic shape validation; or, when `cadence` is omitted, `dex.id`/`dex.version`
    * missing. Whether the pool/pair actually exists and resolves — and, for a candle
    * `cadence`, whether that combination is actually servable on the requested `network` —
@@ -4668,7 +5534,7 @@ export type ImportDatasetErrors = {
    *
    * For `type: cex`: no `cex` block, or its `exchange` is not a centralized exchange of
    * `GET /exchanges` (a decentralized one is `400` too — use `type: dex`), `segment` is not
-   * `spot` (the only segment a `cex` import takes today), `dataType` is not `ticker` or
+   * `spot` (the segment a `cex` import takes), `dataType` is not `ticker` or
    * `klines`, or
    * `cadence` is not one of the values a `cex` import takes (see `DatasetImportRequest`).
    * Whether the range holds data, and whether it holds data fine enough for the `cadence`
@@ -4694,13 +5560,32 @@ export type ImportDatasetErrors = {
    */
   403: InsufficientScopeError;
   /**
+   * No such collection for this user. A collection that is not yours is answered exactly as one
+   * that does not exist, and the message names the collection.
+   *
+   */
+  404: ResponseError;
+  /**
    * You already have a dataset with this `name`
    */
   409: ResponseError;
   /**
-   * Your tier's dataset count limit is reached, or your account's total storage limit
-   * (`GET /account`'s `maxTotalStorageBytes`) is already reached. Delete a dataset to free
-   * a slot or space, or upgrade.
+   * Your tier's dataset count limit is reached, your account's total storage limit
+   * (`GET /account`'s `maxTotalStorageBytes`) is already reached, or you already have as
+   * many imports in flight as your tier allows (`maxConcurrentImports`). Delete a dataset
+   * to free a slot or space, wait for an import to finish, or upgrade.
+   *
+   * The refusal for the imports in flight is the one that clears by itself, when one of
+   * your imports ends: it is `reason: IMPORT_CONCURRENT_LIMIT`, `retryable: true` and it
+   * carries a `Retry-After`. The others are limits of your plan that waiting does not fix:
+   * they are `retryable: false` and carry no `Retry-After`. The dataset count and the
+   * storage are `reason: PLAN_LIMIT`; the instruments of the month are
+   * `reason: IMPORT_MONTHLY_QUOTA`.
+   *
+   * A `cex` import that would be one instrument more than your tier's
+   * `maxCexImportInstrumentsPerMonth` for that market this month is `429` too, with
+   * `reason: IMPORT_MONTHLY_QUOTA` and no `Retry-After`: the message says the day the
+   * quota renews.
    *
    */
   429: ResponseError;
@@ -4893,7 +5778,9 @@ export type StartLiveErrors = {
    * instruments in a list than your plan allows, more runs waiting for a source than your plan keeps, or a
    * `sandboxMinutes` shorter than the trial your plan gives.
    * The message names your plan, and retrying will not help until something changes, so there is no
-   * `Retry-After`. Or **the platform is at capacity** right now: a `Retry-After` header says when to try again.
+   * `Retry-After`. The limit of runs left waiting for a source is `reason: WAITING_RUNS_LIMIT`; the other
+   * limits of your plan are `reason: PLAN_LIMIT`. Or **the platform is at capacity** right now: a
+   * `Retry-After` header says when to try again.
    *
    */
   429: ResponseError;
@@ -5181,7 +6068,7 @@ export type AttachLiveSourceData = {
 
 export type AttachLiveSourceErrors = {
   /**
-   * No `source`, a `warmFrom` outside `0` to `3600`, a `ref` longer than 64 characters, or a source a start would refuse, with the same messages (a malformed one, a type the strategy cannot consume, a segment with no live data).
+   * No `source`, a `warmFrom` outside `0` to `3600`, a `ref` longer than 64 characters, or a source a start would refuse, with the same messages (a malformed one, a type the strategy cannot consume, a segment with no live data). On a run started with `paper.accounts: instrument`, a wildcard instrument (`*`, or a pair with a `*` on one side) is refused on every plan, as at start: name the instruments, one per attachment or a list.
    */
   400: ResponseError;
   /**
@@ -5376,7 +6263,7 @@ export type GetLiveRunSignalsData = {
      */
     instrument?: string;
     /**
-     * Narrow to one or more signal types, comma-separated (`hint`, `info`, `marker`, `command`, `paper`). Combines with `instrument`.
+     * Narrow to one or more signal types, comma-separated (`hint`, `info`, `marker`, `command`, `paper`, `system`). With no `type` the first five are returned and `system` is not. Combines with `instrument`.
      */
     type?: string;
     /**
@@ -5572,6 +6459,929 @@ export type MintLiveConnectionTokenResponses = {
 
 export type MintLiveConnectionTokenResponse =
   MintLiveConnectionTokenResponses[keyof MintLiveConnectionTokenResponses];
+
+export type ListSignalChannelsData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/signals/channels";
+};
+
+export type ListSignalChannelsErrors = {
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+};
+
+export type ListSignalChannelsError =
+  ListSignalChannelsErrors[keyof ListSignalChannelsErrors];
+
+export type ListSignalChannelsResponses = {
+  /**
+   * Your channels.
+   */
+  200: SignalChannelList;
+};
+
+export type ListSignalChannelsResponse =
+  ListSignalChannelsResponses[keyof ListSignalChannelsResponses];
+
+export type CreateSignalChannelData = {
+  body: SignalChannelRequest;
+  path?: never;
+  query?: never;
+  url: "/signals/channels";
+};
+
+export type CreateSignalChannelErrors = {
+  /**
+   * A `name` missing or longer than 64 characters, a `description` longer than 500, or a `visibility` other than `unlisted` or `public`.
+   */
+  400: ResponseError;
+  /**
+   * Your plan does not include owning signal channels.
+   */
+  402: ResponseError;
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
+   * You already own as many channels as your plan allows (`reason: PLAN_LIMIT`, no `Retry-After`). Delete one first.
+   */
+  429: ResponseError;
+};
+
+export type CreateSignalChannelError =
+  CreateSignalChannelErrors[keyof CreateSignalChannelErrors];
+
+export type CreateSignalChannelResponses = {
+  /**
+   * Created.
+   */
+  201: SignalChannel;
+};
+
+export type CreateSignalChannelResponse =
+  CreateSignalChannelResponses[keyof CreateSignalChannelResponses];
+
+export type ListPublicSignalChannelsData = {
+  body?: never;
+  path?: never;
+  query?: {
+    /**
+     * The `channelId` from a previous page's `_links.next.href`. Omit for the first page.
+     */
+    cursor?: string;
+    /**
+     * Page size. Larger values are capped, not rejected.
+     */
+    limit?: number;
+  };
+  url: "/signals/channels/public";
+};
+
+export type ListPublicSignalChannelsErrors = {
+  /**
+   * An invalid `cursor` or `limit`.
+   */
+  400: ResponseError;
+};
+
+export type ListPublicSignalChannelsError =
+  ListPublicSignalChannelsErrors[keyof ListPublicSignalChannelsErrors];
+
+export type ListPublicSignalChannelsResponses = {
+  /**
+   * A page of public channels.
+   */
+  200: PublicSignalChannelPage;
+};
+
+export type ListPublicSignalChannelsResponse =
+  ListPublicSignalChannelsResponses[keyof ListPublicSignalChannelsResponses];
+
+export type DeleteSignalChannelData = {
+  body?: never;
+  path: {
+    channelId: string;
+  };
+  query?: never;
+  url: "/signals/channels/{channelId}";
+};
+
+export type DeleteSignalChannelErrors = {
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
+   * No such channel, or you do not own it.
+   */
+  404: ResponseError;
+};
+
+export type DeleteSignalChannelError =
+  DeleteSignalChannelErrors[keyof DeleteSignalChannelErrors];
+
+export type DeleteSignalChannelResponses = {
+  /**
+   * Deleted.
+   */
+  204: void;
+};
+
+export type DeleteSignalChannelResponse =
+  DeleteSignalChannelResponses[keyof DeleteSignalChannelResponses];
+
+export type GetSignalChannelData = {
+  body?: never;
+  path: {
+    channelId: string;
+  };
+  query?: never;
+  url: "/signals/channels/{channelId}";
+};
+
+export type GetSignalChannelErrors = {
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
+   * No such channel, or it was deleted.
+   */
+  404: ResponseError;
+};
+
+export type GetSignalChannelError =
+  GetSignalChannelErrors[keyof GetSignalChannelErrors];
+
+export type GetSignalChannelResponses = {
+  /**
+   * The channel.
+   */
+  200: SignalChannel;
+};
+
+export type GetSignalChannelResponse =
+  GetSignalChannelResponses[keyof GetSignalChannelResponses];
+
+export type UpdateSignalChannelData = {
+  body: UpdateSignalChannelRequest;
+  path: {
+    channelId: string;
+  };
+  query?: never;
+  url: "/signals/channels/{channelId}";
+};
+
+export type UpdateSignalChannelErrors = {
+  /**
+   * A field outside the rules of `POST /signals/channels`, or an empty body.
+   */
+  400: ResponseError;
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
+   * No such channel, or you do not own it.
+   */
+  404: ResponseError;
+};
+
+export type UpdateSignalChannelError =
+  UpdateSignalChannelErrors[keyof UpdateSignalChannelErrors];
+
+export type UpdateSignalChannelResponses = {
+  /**
+   * The channel as it is now, as its owner sees it.
+   */
+  200: SignalChannel;
+};
+
+export type UpdateSignalChannelResponse =
+  UpdateSignalChannelResponses[keyof UpdateSignalChannelResponses];
+
+export type ListSignalNoticesData = {
+  body?: never;
+  path: {
+    channelId: string;
+  };
+  query?: {
+    /**
+     * The `noticeId` from a previous page's `_links.next.href`. Omit for the first page.
+     */
+    cursor?: string;
+    /**
+     * Page size. Larger values are capped, not rejected.
+     */
+    limit?: number;
+  };
+  url: "/signals/channels/{channelId}/notices";
+};
+
+export type ListSignalNoticesErrors = {
+  /**
+   * An invalid `cursor` or `limit`.
+   */
+  400: ResponseError;
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
+   * No such channel, or you do not own it.
+   */
+  404: ResponseError;
+};
+
+export type ListSignalNoticesError =
+  ListSignalNoticesErrors[keyof ListSignalNoticesErrors];
+
+export type ListSignalNoticesResponses = {
+  /**
+   * A page of notices.
+   */
+  200: SignalNoticePage;
+};
+
+export type ListSignalNoticesResponse =
+  ListSignalNoticesResponses[keyof ListSignalNoticesResponses];
+
+export type PublishSignalNoticeData = {
+  body: SignalNoticeRequest;
+  path: {
+    channelId: string;
+  };
+  query?: never;
+  url: "/signals/channels/{channelId}/notices";
+};
+
+export type PublishSignalNoticeErrors = {
+  /**
+   * No `source`, a source that is not one instrument or pool of a market that can be followed live (the rules of a start's `sources`, and no `*`), a `ref` longer than 64 characters, an `expiresIn` outside `1` to `3600`, or `data` outside its rules.
+   */
+  400: ResponseError;
+  /**
+   * Your plan does not include publishing notices.
+   */
+  402: ResponseError;
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
+   * No such channel, or you do not own it.
+   */
+  404: ResponseError;
+  /**
+   * The channel already published as many notices in the last 60 seconds as your plan allows: `reason: NOTICE_RATE_LIMIT`, `retryable: true`, and `Retry-After` says when the next one fits.
+   */
+  429: ResponseError;
+};
+
+export type PublishSignalNoticeError =
+  PublishSignalNoticeErrors[keyof PublishSignalNoticeErrors];
+
+export type PublishSignalNoticeResponses = {
+  /**
+   * Accepted. If the same `ref` was sent before to this channel, the notice it made, unchanged.
+   */
+  202: SignalNoticeAccepted;
+};
+
+export type PublishSignalNoticeResponse =
+  PublishSignalNoticeResponses[keyof PublishSignalNoticeResponses];
+
+export type ListSignalOffersData = {
+  body?: never;
+  path: {
+    channelId: string;
+  };
+  query?: never;
+  url: "/signals/channels/{channelId}/offers";
+};
+
+export type ListSignalOffersErrors = {
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
+   * No such channel, or you do not own it.
+   */
+  404: ResponseError;
+};
+
+export type ListSignalOffersError =
+  ListSignalOffersErrors[keyof ListSignalOffersErrors];
+
+export type ListSignalOffersResponses = {
+  /**
+   * The offers.
+   */
+  200: SignalOfferList;
+};
+
+export type ListSignalOffersResponse =
+  ListSignalOffersResponses[keyof ListSignalOffersResponses];
+
+export type CreateSignalOfferData = {
+  body: SignalOfferRequest;
+  path: {
+    channelId: string;
+  };
+  query?: never;
+  url: "/signals/channels/{channelId}/offers";
+};
+
+export type CreateSignalOfferErrors = {
+  /**
+   * A `delay` outside `0` to `3600`, a `maxRuns` outside `1` to `100`, a `durationDays` outside `1` to `3650`, or a `purchaseUrl` that is not an `https` address with a host, of at most 500 characters.
+   */
+  400: ResponseError;
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
+   * No such channel, or you do not own it.
+   */
+  404: ResponseError;
+  /**
+   * The channel already has 10 offers (`reason: OFFER_LIMIT`).
+   */
+  409: ResponseError;
+};
+
+export type CreateSignalOfferError =
+  CreateSignalOfferErrors[keyof CreateSignalOfferErrors];
+
+export type CreateSignalOfferResponses = {
+  /**
+   * Created, as its owner sees it.
+   */
+  201: SignalOffer;
+};
+
+export type CreateSignalOfferResponse =
+  CreateSignalOfferResponses[keyof CreateSignalOfferResponses];
+
+export type ListSignalCodesData = {
+  body?: never;
+  path: {
+    offerId: string;
+  };
+  query?: never;
+  url: "/signals/offers/{offerId}/codes";
+};
+
+export type ListSignalCodesErrors = {
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
+   * No such offer of yours.
+   */
+  404: ResponseError;
+};
+
+export type ListSignalCodesError =
+  ListSignalCodesErrors[keyof ListSignalCodesErrors];
+
+export type ListSignalCodesResponses = {
+  /**
+   * The codes.
+   */
+  200: SignalCodeList;
+};
+
+export type ListSignalCodesResponse =
+  ListSignalCodesResponses[keyof ListSignalCodesResponses];
+
+export type MintSignalCodesData = {
+  body: SignalCodesRequest;
+  path: {
+    offerId: string;
+  };
+  query?: never;
+  url: "/signals/offers/{offerId}/codes";
+};
+
+export type MintSignalCodesErrors = {
+  /**
+   * A `count` outside `1` to `100`.
+   */
+  400: ResponseError;
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
+   * No such offer of yours.
+   */
+  404: ResponseError;
+  /**
+   * The offer would have more than 10 000 codes (`reason: CODE_LIMIT`).
+   */
+  409: ResponseError;
+};
+
+export type MintSignalCodesError =
+  MintSignalCodesErrors[keyof MintSignalCodesErrors];
+
+export type MintSignalCodesResponses = {
+  /**
+   * The codes, in clear, this once.
+   */
+  201: SignalMintedCodes;
+};
+
+export type MintSignalCodesResponse =
+  MintSignalCodesResponses[keyof MintSignalCodesResponses];
+
+export type RevokeSignalCodeData = {
+  body?: never;
+  path: {
+    codeId: string;
+  };
+  query?: never;
+  url: "/signals/codes/{codeId}";
+};
+
+export type RevokeSignalCodeErrors = {
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
+   * No such code of yours.
+   */
+  404: ResponseError;
+};
+
+export type RevokeSignalCodeError =
+  RevokeSignalCodeErrors[keyof RevokeSignalCodeErrors];
+
+export type RevokeSignalCodeResponses = {
+  /**
+   * Revoked.
+   */
+  204: void;
+};
+
+export type RevokeSignalCodeResponse =
+  RevokeSignalCodeResponses[keyof RevokeSignalCodeResponses];
+
+export type ListSignalSubscriptionsData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/signals/subscriptions";
+};
+
+export type ListSignalSubscriptionsErrors = {
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+};
+
+export type ListSignalSubscriptionsError =
+  ListSignalSubscriptionsErrors[keyof ListSignalSubscriptionsErrors];
+
+export type ListSignalSubscriptionsResponses = {
+  /**
+   * Your subscriptions.
+   */
+  200: SignalSubscriptionList;
+};
+
+export type ListSignalSubscriptionsResponse =
+  ListSignalSubscriptionsResponses[keyof ListSignalSubscriptionsResponses];
+
+export type RedeemSignalCodeData = {
+  body: SignalCodeRedemption;
+  path?: never;
+  query?: never;
+  url: "/signals/subscriptions";
+};
+
+export type RedeemSignalCodeErrors = {
+  /**
+   * No `code`, or one longer than 100 characters.
+   */
+  400: ResponseError;
+  /**
+   * Your plan does not include subscriptions to signal channels.
+   */
+  402: ResponseError;
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
+   * No such code, it was revoked, or its channel was deleted.
+   */
+  404: ResponseError;
+  /**
+   * Someone else already redeemed this code (`reason: CODE_USED`).
+   */
+  409: ResponseError;
+  /**
+   * You already hold as many active subscriptions as your plan allows (`reason: PLAN_LIMIT`, no `Retry-After`). An expired one does not count.
+   */
+  429: ResponseError;
+};
+
+export type RedeemSignalCodeError =
+  RedeemSignalCodeErrors[keyof RedeemSignalCodeErrors];
+
+export type RedeemSignalCodeResponses = {
+  /**
+   * You had already redeemed this code; the subscription it gave you.
+   */
+  200: SignalSubscription;
+  /**
+   * Redeemed.
+   */
+  201: SignalSubscription;
+};
+
+export type RedeemSignalCodeResponse =
+  RedeemSignalCodeResponses[keyof RedeemSignalCodeResponses];
+
+export type CancelSignalSubscriptionData = {
+  body?: never;
+  path: {
+    subscriptionId: string;
+  };
+  query?: never;
+  url: "/signals/subscriptions/{subscriptionId}";
+};
+
+export type CancelSignalSubscriptionErrors = {
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
+   * No such subscription of yours.
+   */
+  404: ResponseError;
+};
+
+export type CancelSignalSubscriptionError =
+  CancelSignalSubscriptionErrors[keyof CancelSignalSubscriptionErrors];
+
+export type CancelSignalSubscriptionResponses = {
+  /**
+   * Cancelled.
+   */
+  204: void;
+};
+
+export type CancelSignalSubscriptionResponse =
+  CancelSignalSubscriptionResponses[keyof CancelSignalSubscriptionResponses];
+
+export type GetSignalSubscriptionData = {
+  body?: never;
+  path: {
+    subscriptionId: string;
+  };
+  query?: never;
+  url: "/signals/subscriptions/{subscriptionId}";
+};
+
+export type GetSignalSubscriptionErrors = {
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
+   * No such subscription of yours.
+   */
+  404: ResponseError;
+};
+
+export type GetSignalSubscriptionError =
+  GetSignalSubscriptionErrors[keyof GetSignalSubscriptionErrors];
+
+export type GetSignalSubscriptionResponses = {
+  /**
+   * The subscription.
+   */
+  200: SignalSubscription;
+};
+
+export type GetSignalSubscriptionResponse =
+  GetSignalSubscriptionResponses[keyof GetSignalSubscriptionResponses];
+
+export type RenewSignalSubscriptionData = {
+  body: SignalCodeRedemption;
+  path: {
+    subscriptionId: string;
+  };
+  query?: never;
+  url: "/signals/subscriptions/{subscriptionId}/renew";
+};
+
+export type RenewSignalSubscriptionErrors = {
+  /**
+   * No `code`, or one longer than 100 characters.
+   */
+  400: ResponseError;
+  /**
+   * Your plan does not include subscriptions to signal channels.
+   */
+  402: ResponseError;
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
+   * No such subscription of yours, or no such code (or it was revoked).
+   */
+  404: ResponseError;
+  /**
+   * The code was already used (`CODE_USED`), is for another offer (`OTHER_OFFER`), the subscription was revoked or cancelled (`SUBSCRIPTION_INACTIVE`), or its offer does not expire (`DOES_NOT_EXPIRE`).
+   */
+  409: ResponseError;
+  /**
+   * The subscription has expired and you already hold as many active subscriptions as your plan allows: a renewed one counts again (`reason: PLAN_LIMIT`, no `Retry-After`).
+   */
+  429: ResponseError;
+};
+
+export type RenewSignalSubscriptionError =
+  RenewSignalSubscriptionErrors[keyof RenewSignalSubscriptionErrors];
+
+export type RenewSignalSubscriptionResponses = {
+  /**
+   * Renewed.
+   */
+  200: SignalSubscription;
+};
+
+export type RenewSignalSubscriptionResponse =
+  RenewSignalSubscriptionResponses[keyof RenewSignalSubscriptionResponses];
+
+export type FeedSignalSubscriptionRunData = {
+  body: SignalSubscriptionRunRequest;
+  path: {
+    subscriptionId: string;
+  };
+  query?: never;
+  url: "/signals/subscriptions/{subscriptionId}/runs";
+};
+
+export type FeedSignalSubscriptionRunErrors = {
+  /**
+   * No `runId`, a `type` other than `ticker` or `kline` or one the run's strategy does not consume, or a `warmFrom` outside `0` to `3600`.
+   */
+  400: ResponseError;
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
+   * No such subscription or run of yours.
+   */
+  404: ResponseError;
+  /**
+   * The subscription is not active (expired, revoked or cancelled: `SUBSCRIPTION_INACTIVE`), or the run is fed by another active subscription of this channel (`RUN_FED_BY_ANOTHER`).
+   */
+  409: ResponseError;
+  /**
+   * The subscription already feeds its `maxRuns` runs (`reason: SUBSCRIPTION_RUNS_LIMIT`, no `Retry-After`). Stop feeding one first.
+   */
+  429: ResponseError;
+};
+
+export type FeedSignalSubscriptionRunError =
+  FeedSignalSubscriptionRunErrors[keyof FeedSignalSubscriptionRunErrors];
+
+export type FeedSignalSubscriptionRunResponses = {
+  /**
+   * The run was already fed by this subscription.
+   */
+  200: SignalSubscription;
+  /**
+   * The run is fed; the subscription with its runs.
+   */
+  201: SignalSubscription;
+};
+
+export type FeedSignalSubscriptionRunResponse =
+  FeedSignalSubscriptionRunResponses[keyof FeedSignalSubscriptionRunResponses];
+
+export type StopFeedingSignalSubscriptionRunData = {
+  body?: never;
+  path: {
+    subscriptionId: string;
+    runId: string;
+  };
+  query?: never;
+  url: "/signals/subscriptions/{subscriptionId}/runs/{runId}";
+};
+
+export type StopFeedingSignalSubscriptionRunErrors = {
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
+   * No such subscription of yours, or the run was never fed by it.
+   */
+  404: ResponseError;
+};
+
+export type StopFeedingSignalSubscriptionRunError =
+  StopFeedingSignalSubscriptionRunErrors[keyof StopFeedingSignalSubscriptionRunErrors];
+
+export type StopFeedingSignalSubscriptionRunResponses = {
+  /**
+   * Stopped.
+   */
+  204: void;
+};
+
+export type StopFeedingSignalSubscriptionRunResponse =
+  StopFeedingSignalSubscriptionRunResponses[keyof StopFeedingSignalSubscriptionRunResponses];
+
+export type ListSignalDeliveriesData = {
+  body?: never;
+  path: {
+    subscriptionId: string;
+  };
+  query?: {
+    /**
+     * The cursor from a previous page's `_links.next.href`. Omit for the first page.
+     */
+    cursor?: string;
+    /**
+     * Page size. Larger values are capped, not rejected.
+     */
+    limit?: number;
+  };
+  url: "/signals/subscriptions/{subscriptionId}/deliveries";
+};
+
+export type ListSignalDeliveriesErrors = {
+  /**
+   * An invalid `cursor` or `limit`.
+   */
+  400: ResponseError;
+  /**
+   * The API key behind the token does not carry the scope this operation needs; `required` names
+   * it. Create or edit the key in the web app to give it that scope, then ask for a new token:
+   * the scopes of a token are the ones the key had when it was issued. See
+   * [Authentication and scopes](https://github.com/QTSurfer/qtsurfer-api/blob/main/docs/auth.md).
+   *
+   */
+  403: InsufficientScopeError;
+  /**
+   * No such subscription of yours.
+   */
+  404: ResponseError;
+};
+
+export type ListSignalDeliveriesError =
+  ListSignalDeliveriesErrors[keyof ListSignalDeliveriesErrors];
+
+export type ListSignalDeliveriesResponses = {
+  /**
+   * A page of deliveries.
+   */
+  200: SignalDeliveryPage;
+};
+
+export type ListSignalDeliveriesResponse =
+  ListSignalDeliveriesResponses[keyof ListSignalDeliveriesResponses];
+
+export type PublishSignalNoticeByHookData = {
+  body: SignalNoticeRequest;
+  path: {
+    /**
+     * The last part of the channel's `webhookUrl`, as it is.
+     */
+    hookKey: string;
+  };
+  query?: never;
+  url: "/signals/hook/{hookKey}";
+};
+
+export type PublishSignalNoticeByHookErrors = {
+  /**
+   * As `POST /signals/channels/{channelId}/notices`.
+   */
+  400: ResponseError;
+  /**
+   * The owner's plan does not include publishing notices.
+   */
+  402: ResponseError;
+  /**
+   * Not a channel's current webhook address (unknown, replaced, or the channel was deleted).
+   */
+  404: ResponseError;
+  /**
+   * As `POST /signals/channels/{channelId}/notices` (`reason: NOTICE_RATE_LIMIT`, with `Retry-After`).
+   */
+  429: ResponseError;
+};
+
+export type PublishSignalNoticeByHookError =
+  PublishSignalNoticeByHookErrors[keyof PublishSignalNoticeByHookErrors];
+
+export type PublishSignalNoticeByHookResponses = {
+  /**
+   * Accepted, as `POST /signals/channels/{channelId}/notices`.
+   */
+  202: SignalNoticeAccepted;
+};
+
+export type PublishSignalNoticeByHookResponse =
+  PublishSignalNoticeByHookResponses[keyof PublishSignalNoticeByHookResponses];
 
 export type ClientOptions = {
   baseUrl:

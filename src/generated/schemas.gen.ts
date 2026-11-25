@@ -19,6 +19,18 @@ export const ResponseErrorSchema = {
       description: `A stable token naming the cause, for a client to branch on without reading \`message\`.
 Present only on an error that has one, and each operation that can return one lists
 the values it uses. A client treats a value it does not know like an absent \`reason\`.
+
+Besides the values an operation lists, these can come with any operation:
+
+| \`reason\` | Status | When |
+|---|---|---|
+| \`STRATEGY_OUTDATED\` | \`409\` | The strategy was compiled for an earlier version of the platform: register it again. |
+| \`PLAN_REQUIRED\` | \`402\` | Your plan does not include what the request asks for. |
+| \`PLAN_LIMIT\` | \`429\` | You reached a limit of your own plan (no \`Retry-After\`: waiting does not help). |
+| \`INVALID_VALUE\` | \`400\` | A number, a date or a name of the request could not be read. |
+| \`INVALID_BODY\` | \`400\` | The request body is not JSON. |
+| \`WRONG_FIELD_TYPE\` | \`400\` | A field of the body has a value of the wrong type. |
+| \`INTERNAL_ERROR\` | \`500\` | A failure on our side; quote the reference in \`message\` when you ask for help. |
 `,
       type: "string",
       example: "OUTSIDE_WINDOW",
@@ -288,7 +300,7 @@ export const PoolListMetaSchema = {
       type: "string",
       format: "date-time",
       description:
-        "When this listing was last refreshed. It is refreshed every hour, and the `lastPrice` of each pool is as of this time.",
+        "When this listing was last refreshed. The `lastPrice` of each pool is as of this time.",
       example: "2026-10-14T22:32:34Z",
     },
     exchange: {
@@ -350,8 +362,8 @@ export const PoolLinksSchema = {
 } as const;
 
 export const PoolDetailSchema = {
-  description: `A pool of a decentralized exchange that a live run can read. The listing is a place to start, not the
-whole market: a live run can read any pool of the protocol, listed or not.
+  description: `A pool of a decentralized exchange. The listing is a place to start, not the whole market: a live run
+can read any pool of the protocol, listed or not, on an exchange whose segment is in \`liveSegments\`.
 `,
   type: "object",
   required: [
@@ -361,16 +373,17 @@ whole market: a live run can read any pool of the protocol, listed or not.
     "quote",
     "baseAddress",
     "quoteAddress",
-    "feePercent",
     "tvlUsd",
     "volume24hUsd",
   ],
   properties: {
     id: {
       type: "string",
-      pattern: "^0x[0-9a-f]{40}$",
-      description:
-        "The pool's address, in lower case. It is the value to put in `instruments` of a live run's source.",
+      pattern: "^(0x[0-9a-f]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})$",
+      description: `The pool's address. On an EVM chain (\`robinhood\`) it is \`0x\` and 40 hexadecimal digits, in lower case.
+On \`solana\` it is a base58 address of 32 to 44 characters, which is case-sensitive: use it exactly as
+listed. It is the value to put in \`instruments\` of a live run's source.
+`,
       example: "0x52e65b17fb6e5ba00ed806f37afcd2daa50271ca",
     },
     symbol: {
@@ -391,25 +404,27 @@ whole market: a live run can read any pool of the protocol, listed or not.
     },
     baseAddress: {
       type: "string",
-      description: "Address of the base token, in lower case",
+      description:
+        "Address of the base token, in the form of `id` (lower case on an EVM chain; as written, base58 and case-sensitive, on `solana`)",
       example: "0x0bd7d308f8e1639fab988df18a8011f41eacad73",
     },
     quoteAddress: {
       type: "string",
-      description: "Address of the quote token, in lower case",
+      description:
+        "Address of the quote token, in the form of `id` (lower case on an EVM chain; as written, base58 and case-sensitive, on `solana`)",
       example: "0x5fc5360d0400a0fd4f2af552add042d716f1d168",
     },
     feePercent: {
       type: "number",
       description:
-        "The pool's fee tier, in percent (`0.05` is a 0.05 % fee). A protocol can have several pools of the same pair, one per fee tier.",
+        "The pool's fee tier, in percent (`0.05` is a 0.05 % fee). A protocol can have several pools of the same pair, one per fee tier. Absent when the source does not tell it, which is the case of most pools of `solana`.",
       example: 0.01,
     },
     lastPrice: {
       type: "number",
       format: "double",
       description:
-        "The price of one base token in the quote token, as the signals of a run on this pool name the pair. It is as of `meta.updatedAt`, so up to one hour old. Absent when there is no price for the pool.",
+        "The price of one base token in the quote token, as the signals of a run on this pool name the pair. It is as of `meta.updatedAt`. Absent when there is no price for the pool.",
       example: 2411.285967,
     },
     volume24h: {
@@ -498,6 +513,8 @@ one doesn't.
     "maxRangeDays",
     "maxSweepCartesian",
     "maxImportRangeHours",
+    "maxCexImportRangeHours",
+    "maxConcurrentImports",
     "maxDatasets",
     "maxDatasetBytes",
     "maxTotalStorageBytes",
@@ -553,8 +570,32 @@ only their \`samples\` and are not held to it.
     maxImportRangeHours: {
       type: "integer",
       description:
-        "Maximum length, in hours, of the time range of one dataset import from an exchange.",
+        "Maximum length, in hours, of the time range of one dataset import of a decentralized exchange's pool (`type: dex`).",
       example: 6,
+    },
+    maxCexImportRangeHours: {
+      type: "integer",
+      description:
+        "Maximum length, in hours, of the time range of one dataset import of a centralized exchange's history (`type: cex`). It is counted apart from `maxImportRangeHours`.",
+      example: 24,
+    },
+    maxConcurrentImports: {
+      type: "integer",
+      description:
+        "Maximum number of dataset imports your account may have in flight at once, queued or running, whether of an exchange's history or of a pool. A new import over it is refused with `429` until one has finished.",
+      example: 1,
+    },
+    maxCexHistoryDays: {
+      type: "integer",
+      description:
+        "How far back from now, in days, an import of a centralized exchange's history (`type: cex`) may start. The largest whole number means as far back as the platform keeps. Absent on a platform that has not adopted it.",
+      example: 730,
+    },
+    maxCexImportInstrumentsPerMonth: {
+      type: "integer",
+      description:
+        "How many different instruments of one market (an exchange and its segment) your account may import from an exchange's history in a calendar month (UTC). Importing the same instrument again in the month costs nothing. The largest whole number means no limit. Absent on a platform that has not adopted it.",
+      example: 20,
     },
     maxDatasets: {
       type: "integer",
@@ -669,8 +710,41 @@ against \`GET /account\`'s \`maxTotalStorageBytes\`.
 `,
       example: 16293888,
     },
+    cexImportMonth: {
+      type: "string",
+      description:
+        "The calendar month (UTC, `YYYY-MM`) `cexImportInstruments` counts. Absent on a platform that has not adopted the monthly limit.",
+      example: "2026-11",
+    },
+    cexImportInstruments: {
+      type: "array",
+      description:
+        "The instruments of an exchange's history you have imported this month, counted per market against `GET /account`'s `maxCexImportInstrumentsPerMonth`. A market with none is not listed.",
+      items: {
+        $ref: "#/components/schemas/CexImportInstrumentUsage",
+      },
+    },
     _links: {
       $ref: "#/components/schemas/AccountUsageLinks",
+    },
+  },
+} as const;
+
+export const CexImportInstrumentUsageSchema = {
+  type: "object",
+  required: ["exchange", "segment", "used"],
+  properties: {
+    exchange: {
+      type: "string",
+      example: "binance",
+    },
+    segment: {
+      type: "string",
+      example: "spot",
+    },
+    used: {
+      type: "integer",
+      example: 3,
     },
   },
 } as const;
@@ -922,7 +996,7 @@ the dataset instead of its current one. Defaults to the dataset's current versio
     cadence: {
       type: "string",
       description: `Output bar cadence for the prepared range. Coarser cadences are produced on demand by
-resampling the source and stored alongside the native blob in cache. A target finer
+resampling the source and kept for later requests. A target finer
 than the source, or not an exact multiple of it, returns \`400\`. What's accepted, and
 what omitting it means, depends on the source:
 
@@ -963,7 +1037,7 @@ export const JobStateSchema = {
     contextId: {
       type: "string",
       description:
-        "Identifier for the job's execution context. Its current shape is a colon-delimited string encoding the data source type, an internal user id, the exchange, the job id, and the instrument — but that structure is not a committed contract and may change without notice. Treat it as an opaque token: store and pass it back, don't parse it.",
+        "Identifier for the job's execution context. It is an opaque token whose shape may change without notice: store and pass it back, don't parse it.",
       example:
         "jctx:ticker:00000000-0000-0000-0000-000000000000:binance:5ikyamio8b3v9wcnfxztzg:btc/usdt:0vicnz3thzhrqvfczks1pu",
     },
@@ -1121,8 +1195,8 @@ exchanges only — absent for a dataset-backed prepare.
               },
               expected: {
                 type: "integer",
-                description: `Expected row count for the hour (currently always 0; reserved for
-future use). The rationale never depends on it.
+                description: `Expected row count for the hour (always 0; reserved).
+The rationale never depends on it.
 `,
                 example: 0,
               },
@@ -1522,12 +1596,12 @@ export const SweepProgressSchema = {
     retrying: {
       type: "integer",
       description:
-        "Units whose last attempt failed on something transient — an I/O error, a worker that died mid-read — and which are queued to be attempted again. Not counted as failures, because they have not failed yet; a sweep with a non-zero value here is still expected to complete.",
+        "Units whose last attempt failed on something transient — an I/O error, for example — and which are queued to be attempted again. Not counted as failures, because they have not failed yet; a sweep with a non-zero value here is still expected to complete.",
     },
     notStarted: {
       type: "integer",
       description:
-        "Units that have not reported anything yet. Covers both work still queued behind other work and work claimed by a worker that stopped before it began, which is why a sweep with a persistent value here and a rising `stalledSeconds` is worth looking at.",
+        "Units that have not reported anything yet. Covers both work still waiting behind other work and work that stopped before it began, which is why a sweep with a persistent value here and a rising `stalledSeconds` is worth looking at.",
     },
     stalledSeconds: {
       type: "integer",
@@ -1539,7 +1613,7 @@ export const SweepProgressSchema = {
       type: "integer",
       format: "int64",
       description:
-        'Rough seconds remaining, extrapolated from the rate observed so far and assuming nothing else competes for workers. Runs conservative in practice — it has measured 2–5× long when a sweep spent part of its life waiting to be retried, since that wait dilutes the observed rate. **Omitted, never zero, when it cannot be computed**: a sweep with nothing finished yet has no rate to extrapolate from, and a zero would read as "about to finish". Excludes queue wait entirely; `retrying` and `stalledSeconds` are where that shows up.',
+        'Rough seconds remaining, extrapolated from the rate observed so far and assuming nothing else competes for capacity. It can run long when a sweep spent part of its life waiting to be retried, since that wait dilutes the observed rate. **Omitted, never zero, when it cannot be computed**: a sweep with nothing finished yet has no rate to extrapolate from, and a zero would read as "about to finish". Excludes queue wait entirely; `retrying` and `stalledSeconds` are where that shows up.',
     },
   },
 } as const;
@@ -1656,8 +1730,8 @@ export const SweepRunRowSchema = {
       ],
       description: `Present whenever this trial actually has a curve — which is any completed run of a sweep that requested curves at all (\`equityCurve.mode\` \`topN\`/\`topPct\`), not only the ranked winners. Absent, not null, when there is genuinely nothing: the run aborted, it made no trades, or the sweep never retained curves (\`mode\` \`auto\`/\`none\`).
 Selection decides how the curve travels, not whether it exists. A row may carry \`url\` alone, or \`url\` together with the points inline.
-**Read \`points\`/\`equities\` to tell whether the curve is inline — never the presence of this object, and never the absence of \`url\`.** Both mislead, and in opposite directions: this object is present on rows that carry only a pointer, and \`url\` stays present alongside an inline curve so a caller can still re-request a different transform. An inline curve is emitted on the materialisation view (\`?order=natural\`), where each row is read once; the ranked view keeps the pointer, being polled.
-When only a pointer is present, \`GET\` the \`url\` for the curve. Its own \`meta\` there is the real, possibly size-guarded outcome. This outer \`meta\` may be a declaration rather than a measurement — for a row whose curve was not promoted, the point count is derived from the trade count (one equity point per closed trade) instead of being read from the store, to keep a polled response from doing per-row work.`,
+**Read \`points\`/\`equities\` to tell whether the curve is inline — never the presence of this object, and never the absence of \`url\`.** Both mislead, and in opposite directions: this object is present on rows that carry only a pointer, and \`url\` stays present alongside an inline curve so a caller can still re-request a different transform. An inline curve is emitted on the materialisation view (\`?order=natural\`), where each row is read once; the ranked view keeps the pointer.
+When only a pointer is present, \`GET\` the \`url\` for the curve. Its own \`meta\` there is the real, possibly size-guarded outcome. This outer \`meta\` may be a declaration rather than a measurement — for a row whose curve was not promoted, the point count is derived from the trade count (one equity point per closed trade) instead of being read from the store.`,
     },
   },
 } as const;
@@ -1869,7 +1943,7 @@ First failure wins and later ones are not recorded, so on a sweep where several 
       ],
       description: `The same \`JobState\` shape a single-execute \`BacktestJobResult\` carries — not a sweep-specific lookalike, the actual type, so field names and timestamp formatting match exactly.
 \`state.status\` uses \`JobState\`'s own vocabulary (\`New\`/\`Started\`/\`Completed\`/ \`Aborted\`/\`Failed\`), mapped from the sweep's \`status\` field above rather than copying it: \`PARTIAL\` and \`CANCELLED\` both map to \`Aborted\`, because a sweep's \`PARTIAL\` is already terminal (some shards finished, some failed, nothing more is coming) unlike a single job's non-terminal \`Partial\`, which has no equivalent here at all.
-\`state.completed\` is real ticks processed on a plain sweep. On a \`walkForward\` sweep it is currently always \`0\` — the walk-forward fold runner was not wired to count ticks when this shipped, unlike the plain shard path.
+\`state.completed\` is real ticks processed on a plain sweep. On a \`walkForward\` sweep it is always \`0\`: ticks are not counted there.
 \`state.size\` is an upfront estimate — range x the prepare's target cadence, set before any data is even loaded, not a query against loaded data — on a single execute and a plain sweep alike. A plain sweep's value is the sum of every shard's own \`size\` (each shard's per-run estimate x its own vector slice), the same additive shape \`state.completed\` already used above. \`0\` means the prepare context behind the job predates this field (a job whose prepare ran before the estimate existed) — never a guessed cadence standing in for a real one.
 On a \`walkForward\` sweep, \`state.size\` is still always \`0\`: fold runs were out of scope for the estimate the same way they are for \`state.completed\` above — a fold's \`size\` is simply never set, so the sum stays honest at \`0\` rather than needing a special case.`,
     },
@@ -2035,7 +2109,7 @@ export const ResultMapSchema = {
     hostName: {
       type: "string",
       description:
-        "Identifier of the worker that executed the strategy. Useful when reporting issues so support can correlate with logs.",
+        "Identifier of what executed the strategy. Quote it when you report an issue.",
       example: "executor10",
     },
     iops: {
@@ -2149,7 +2223,7 @@ reading: a run that produced no trades often did so for a reason stated here.
         },
       ],
       description:
-        "Equity curve over the backtest. `points[0]` (or `timestamps[0]`/`equities[0]` in `SHORT` mode) is an anchor at the backtest `from` with `initialCapital`; the remaining points are one sample per emitted yield, in order. Use it to plot the strategy's running equity without re-deriving it from the yield history. Always inline for a plain backtest today — never a pointer (`url`); that shape exists only for a sweep row's top-N winners.",
+        "Equity curve over the backtest. `points[0]` (or `timestamps[0]`/`equities[0]` in `SHORT` mode) is an anchor at the backtest `from` with `initialCapital`; the remaining points are one sample per emitted yield, in order. Use it to plot the strategy's running equity without re-deriving it from the yield history. Always inline for a plain backtest — never a pointer (`url`); that shape exists only for a sweep row's top-N winners.",
       example: {
         points: [
           {
@@ -2456,6 +2530,22 @@ real run (\`execute\`) is a clean bill of health, while an empty list from
   },
 } as const;
 
+export const StrategyNameSchema = {
+  type: "string",
+  description: `What the strategy calls itself, read from its source: the name in the \`strategy "Name"\` header of a
+QTScript strategy, the public class of a Java one. It is the name to show for it wherever it is listed.
+Absent, not empty, when the source gives none (a Java source without a public class).
+`,
+  example: "Detach one of two",
+} as const;
+
+export const StrategyLanguageSchema = {
+  type: "string",
+  enum: ["java", "qtscript"],
+  description: "What the source of the strategy is written in.",
+  example: "qtscript",
+} as const;
+
 export const StrategySummarySchema = {
   type: "object",
   description: `One entry from \`GET /strategies\` — the same provenance a full \`StrategyState\` carries
@@ -2467,6 +2557,12 @@ validation with \`GET /strategy/{strategyId}\`.
   properties: {
     strategyId: {
       $ref: "#/components/schemas/strategyId",
+    },
+    name: {
+      $ref: "#/components/schemas/StrategyName",
+    },
+    language: {
+      $ref: "#/components/schemas/StrategyLanguage",
     },
     compiledAt: {
       type: "string",
@@ -2504,6 +2600,12 @@ survived the first event of a short synthetic run — a floor, not a guarantee. 
   properties: {
     strategyId: {
       $ref: "#/components/schemas/strategyId",
+    },
+    name: {
+      $ref: "#/components/schemas/StrategyName",
+    },
+    language: {
+      $ref: "#/components/schemas/StrategyLanguage",
     },
     validation: {
       type: "string",
@@ -2625,8 +2727,16 @@ dataset covers.
     },
     name: {
       type: "string",
-      description: "Unique among your datasets.",
+      description:
+        "Unique among your datasets, whatever collection each is in.",
       example: "My BTC ticks",
+    },
+    collectionId: {
+      type: "string",
+      description: `The collection the dataset is in. Absent when it is at the root, never \`null\`. It
+changes with \`PATCH /datasets/{datasetId}\`, and goes away when the collection is deleted.
+`,
+      example: "dc_3f9a1c2e7b0d4a5f",
     },
     type: {
       type: "string",
@@ -2655,6 +2765,33 @@ rule keep the \`type\` they had.
       format: "date-time",
       description: "When the dataset was created.",
       example: "2026-08-20T09:00:00Z",
+    },
+    meta: {
+      type: "object",
+      description: `How the dataset came to be: a flat map of text to text, written once when the dataset
+is created and never changed afterwards. Always present, \`{}\` when nothing was recorded
+(an upload, or a dataset created before this field existed). It is information for
+whoever looks at the dataset, not something the API decides anything from.
+
+An import records what it was asked for, under keys that begin with \`import.\`
+(\`import.type\`, \`import.cadence\`, \`import.from\`, \`import.to\`, the range requested),
+\`dex.\` (\`dex.network\`, \`dex.contract\`, \`dex.id\`, \`dex.version\`, \`dex.factory\`) or \`cex.\`
+(\`cex.exchange\`, \`cex.segment\`, \`cex.data_type\`). A key with no value is left out. The
+keys the caller sent with the import (\`pool.*\`, \`user.*\`, see \`DatasetImportRequest\`)
+come back beside them.
+`,
+      additionalProperties: {
+        type: "string",
+      },
+      example: {
+        "import.type": "dex",
+        "import.cadence": "1s",
+        "import.from": "2026-11-16T00:25:02Z",
+        "import.to": "2026-11-16T10:30:00Z",
+        "dex.network": "solana",
+        "dex.contract": "6nwmQSgHWtRfXw9xqQM3hseyKzWrQq2gzamoSbjKqs32",
+        "pool.name": "FiveM / SOL",
+      },
     },
     currentVersionId: {
       type: "string",
@@ -2753,6 +2890,146 @@ when \`status\` is \`failed\`.
   },
 } as const;
 
+export const CollectionSchema = {
+  type: "object",
+  description: `A folder of datasets. A dataset is in at most one collection, and a collection holds
+datasets of any \`type\`.
+`,
+  required: ["collectionId", "name", "createdAt", "updatedAt", "datasetCount"],
+  properties: {
+    collectionId: {
+      type: "string",
+      description: "Opaque id, returned by `POST /collections`.",
+      example: "dc_3f9a1c2e7b0d4a5f",
+    },
+    name: {
+      type: "string",
+      description: "Unique among your collections, compared as written.",
+      example: "Majors",
+    },
+    description: {
+      type: "string",
+      description: "Absent when the collection has none.",
+      example: "BTC and ETH, one-minute bars",
+    },
+    createdAt: {
+      type: "string",
+      format: "date-time",
+      example: "2026-11-23T09:00:00Z",
+    },
+    updatedAt: {
+      type: "string",
+      format: "date-time",
+      description:
+        "When the collection's `name` or `description` last changed.",
+      example: "2026-11-23T09:20:00Z",
+    },
+    datasetCount: {
+      type: "integer",
+      description:
+        "How many datasets are in the collection now. A dataset you have deleted does not count.",
+      example: 3,
+    },
+    datasetCountByType: {
+      type: "object",
+      description: `The same datasets counted by their \`type\` (\`ticker\`, \`klines\`): a key for each type that
+has at least one dataset, the count as its value. Absent when the collection has no
+datasets. The keys come in no particular order.
+`,
+      additionalProperties: {
+        type: "integer",
+      },
+      example: {
+        klines: 2,
+        ticker: 1,
+      },
+    },
+  },
+} as const;
+
+export const CollectionListSchema = {
+  type: "object",
+  required: ["collections"],
+  properties: {
+    collections: {
+      type: "array",
+      items: {
+        $ref: "#/components/schemas/Collection",
+      },
+    },
+  },
+} as const;
+
+export const CollectionCreateRequestSchema = {
+  type: "object",
+  required: ["name"],
+  properties: {
+    name: {
+      type: "string",
+      description:
+        "Trimmed; the trimmed text has 1 to 100 characters. `409` if you already have a collection of that name.",
+      example: "Majors",
+    },
+    description: {
+      type: ["string", "null"],
+      description:
+        "Optional, up to 500 characters. A blank text, or `null`, is the same as none.",
+      example: "BTC and ETH, one-minute bars",
+    },
+  },
+} as const;
+
+export const CollectionUpdateRequestSchema = {
+  type: "object",
+  description:
+    "At least one of the two fields. A field left out is not changed.",
+  properties: {
+    name: {
+      type: "string",
+      description:
+        "The new name, under the same rules as on creation. Cannot be `null`.",
+      example: "Majors 2026",
+    },
+    description: {
+      type: ["string", "null"],
+      description:
+        "The new description, up to 500 characters. `null` or a blank text removes it.",
+    },
+  },
+} as const;
+
+export const CollectionDeletedSchema = {
+  type: "object",
+  required: ["collectionId", "deleted"],
+  properties: {
+    collectionId: {
+      type: "string",
+      example: "dc_3f9a1c2e7b0d4a5f",
+    },
+    deleted: {
+      type: "boolean",
+      enum: [true],
+    },
+  },
+} as const;
+
+export const DatasetMoveRequestSchema = {
+  type: "object",
+  description: `The body of \`PATCH /datasets/{datasetId}\`: exactly one field, \`collectionId\`. A body
+without it, or with any other field, is \`400\`.
+`,
+  required: ["collectionId"],
+  additionalProperties: false,
+  properties: {
+    collectionId: {
+      type: ["string", "null"],
+      description:
+        "The collection to move the dataset into, or `null` to take it out of its collection and back to the root.",
+      example: "dc_3f9a1c2e7b0d4a5f",
+    },
+  },
+} as const;
+
 export const DatasetWithLinksSchema = {
   description:
     "A `Dataset` plus a self link. Returned by `GET /datasets/{datasetId}`.",
@@ -2767,12 +3044,12 @@ export const DatasetWithLinksSchema = {
           type: "string",
           description: `Presigned GET URL to the current version's stored file — see \`dataFormat\` for
 which format it's actually in. Present only once the current version's status is
-\`ready\`. Long-lived (day-scale, not permanent): a DuckDB-WASM/\`lastra-ts\`-style
-reader issues HTTP range requests against it lazily over an extended viewing
-session, not in one shot like a browser upload.
+\`ready\`. It is time-limited, so read the dataset again for a fresh one. It is meant to
+last through a viewing session in which a DuckDB-WASM/\`lastra-ts\`-style reader issues
+HTTP range requests against it lazily, not just one shot like a browser upload.
 `,
           example:
-            "https://storage.qtsurfer.com/00000000-.../ds_3f9a1c2e7b0d4a5f/dsv_8e2b4f19c6a03d7e/ticker_BTC_USDT_1700000000000_1700086400000_1m.lastra?X-Amz-...",
+            "https://storage.qtsurfer.com/00000000-.../ds_3f9a1c2e7b0d4a5f/dsv_8e2b4f19c6a03d7e/ticker_BTC_USDT_1700000000000_1700086400000_1m.lastra?...",
         },
         dataFormat: {
           type: "string",
@@ -2780,8 +3057,8 @@ session, not in one shot like a browser upload.
           description: `Which format \`dataUrl\` is actually in — check this rather than assuming it
 matches how you uploaded it. \`lastra\` — our native columnar format — for a CSV (or
 gzip/zip of one) upload, always converted on ingest, or for a lastra upload,
-stored as-is (the value alone doesn't tell you which). \`parquet\` for a parquet
-upload, also stored as-is today.
+stored as it is (the value alone doesn't tell you which). \`parquet\` for a parquet
+upload, also stored as it is.
 `,
           example: "lastra",
         },
@@ -2817,7 +3094,7 @@ export const DatasetUploadTargetSchema = {
 credentials.
 `,
       example:
-        "https://storage.qtsurfer.com/uploads/00000000-.../up_1a2b3c4d5e6f7a8b/raw.csv?X-Amz-...",
+        "https://storage.qtsurfer.com/uploads/00000000-.../up_1a2b3c4d5e6f7a8b/raw.csv?...",
     },
     expiresInMinutes: {
       type: "integer",
@@ -2880,6 +3157,12 @@ dataset's \`type\` is read from the data once the upload has been ingested (see
         },
         instrument: {
           $ref: "#/components/schemas/Instrument",
+        },
+        collectionId: {
+          type: "string",
+          description:
+            "The collection the dataset was created in. Present only when the request named one.",
+          example: "dc_3f9a1c2e7b0d4a5f",
         },
       },
     },
@@ -2952,12 +3235,12 @@ numeric values fell in (seconds, millis, or micros).
     dataUrl: {
       type: "string",
       description: `Presigned GET URL to the stored file — see \`dataFormat\` for which format it's in.
-Present once the version is \`ready\`. Long-lived (day-scale, not permanent): a
-DuckDB-WASM/\`lastra-ts\`-style reader issues HTTP range requests against it lazily over
-an extended viewing session, not in one shot like a browser upload.
+Present once the version is \`ready\`. It is time-limited, so read the dataset again for a fresh
+one. It is meant to last through a viewing session in which a DuckDB-WASM/\`lastra-ts\`-style
+reader issues HTTP range requests against it lazily, not just one shot like a browser upload.
 `,
       example:
-        "https://storage.qtsurfer.com/00000000-.../ds_3f9a1c2e7b0d4a5f/dsv_8e2b4f19c6a03d7e/ticker_BTC_USDT_1700000000000_1700086400000_1m.lastra?X-Amz-...",
+        "https://storage.qtsurfer.com/00000000-.../ds_3f9a1c2e7b0d4a5f/dsv_8e2b4f19c6a03d7e/ticker_BTC_USDT_1700000000000_1700086400000_1m.lastra?...",
     },
     dataFormat: {
       type: "string",
@@ -2966,7 +3249,7 @@ an extended viewing session, not in one shot like a browser upload.
 how you uploaded it. \`lastra\` — our native columnar format — for a CSV (or gzip/zip
 of one) upload, always converted on ingest, or for a lastra upload, stored as-is
 (the value alone doesn't tell you which). \`parquet\` for a parquet upload, also
-stored as-is today.
+stored as it is.
 `,
       example: "lastra",
     },
@@ -2990,7 +3273,7 @@ that can itself age out — see the \`404\` case on \`GET .../uploads/{uploadId}
       enum: ["uploading", "ingesting", "ready", "failed"],
       description: `* \`uploading\` — the file was PUT to the presigned URL, but \`finalize\` has not been
   called yet.
-* \`ingesting\` — \`finalize\` was called; the worker is parsing and validating the file.
+* \`ingesting\` — \`finalize\` was called; the file is being parsed and validated.
 * \`ready\` — ingested successfully. \`version\` carries the result.
 * \`failed\` — ingest rejected the file (e.g. bad CSV contract, mixed timestamp units, a
   \`.zip\` with no file inside or more than one).
@@ -3038,6 +3321,15 @@ selected by \`type\`: \`dex\` (block \`dex\`) or \`cex\` (block \`cex\`), the tw
     },
     instrument: {
       $ref: "#/components/schemas/Instrument",
+    },
+    collectionId: {
+      type: ["string", "null"],
+      description: `Optional. The collection to create the dataset in; \`null\`, or leaving it out, creates
+it at the root. An id that is not one of your collections is \`404\`, answered before the
+import is queued and before anything is counted against your plan. The \`202\` carries
+\`collectionId\` only when you sent one.
+`,
+      example: "dc_3f9a1c2e7b0d4a5f",
     },
     from: {
       type: "string",
@@ -3113,6 +3405,29 @@ a centralized exchange's market history (block \`cex\`).
     },
     cex: {
       $ref: "#/components/schemas/DatasetImportCexRequest",
+    },
+    meta: {
+      type: "object",
+      description: `Optional. Keys of your own to keep on the dataset, returned as \`meta\` of the \`Dataset\`
+beside the ones the import records itself. Two namespaces are yours: \`pool.*\`, a note
+about the pool the import is for (by convention \`pool.id\`, \`pool.name\`, \`pool.dex\`,
+\`pool.reserve_usd\`, \`pool.created_at\`), and \`user.*\`, any label you like. A key of the
+platform's (\`import.*\`, \`dex.*\`, \`cex.*\`) or of any other namespace is \`400\`.
+
+A key is lower-case letters, digits and \`_\`, in parts separated by \`.\`, at most 64
+characters. A value is a non-empty text of at most 256 characters with no control
+characters. At most 16 keys, and the whole of what is kept (your keys and the ones the
+import adds) at most 32 keys and 4096 bytes of JSON. Anything over a limit is \`400\`; the
+import is not created. \`meta\` is not taken by \`POST /datasets\`.
+`,
+      additionalProperties: {
+        type: "string",
+      },
+      example: {
+        "pool.name": "FiveM / SOL",
+        "pool.dex": "PumpSwap",
+        "user.label": "week one",
+      },
     },
   },
 } as const;
@@ -3195,8 +3510,8 @@ A decentralized exchange's id is \`400\`: import its pools with \`type: dex\`.
     segment: {
       type: "string",
       enum: ["spot"],
-      description: `The market segment, one of the exchange's \`segments\`. \`spot\` is the only segment a
-\`cex\` import takes today, which matches \`instrument\` being a plain spot pair.
+      description: `The market segment, one of the exchange's \`segments\`. \`spot\` is the segment a
+\`cex\` import takes, which matches \`instrument\` being a plain spot pair.
 `,
       example: "spot",
     },
@@ -3227,6 +3542,12 @@ export const DatasetImportCreatedSchema = {
       description:
         "Opaque id of the newly created dataset — same id space as `POST /datasets`.",
       example: "ds_3f9a1c2e7b0d4a5f",
+    },
+    collectionId: {
+      type: "string",
+      description:
+        "The collection the dataset was created in. Present only when the request named one.",
+      example: "dc_3f9a1c2e7b0d4a5f",
     },
     importId: {
       type: "string",
@@ -3277,7 +3598,7 @@ import's doesn't, until this source finishes fetching it.
       enum: ["fetching", "ingesting", "ready", "failed"],
       description: `* \`fetching\` — reading from the source; nothing staged yet.
 * \`ingesting\` — fetch complete, staged, and re-entered the same ingest chain an
-  upload uses; the worker is parsing and validating it.
+  upload uses; the file is being parsed and validated.
 * \`ready\` — ingested successfully. \`version\` carries the result.
 * \`failed\` — the fetch or the ingest that followed it was rejected. \`error\` names why.
 `,
@@ -3454,19 +3775,19 @@ export const LiveSourceSchema = {
       type: "string",
       example: "binance",
       description:
-        "The exchange id, as `GET /exchanges` lists it. For a `dex` source, the chain the pool is on; `robinhood` is the only one today.",
+        "The exchange id, as `GET /exchanges` lists it. For a `dex` source, the chain the pool or the token is on, for example `robinhood` or `solana`.",
     },
     segment: {
       type: "string",
       example: "spot",
       description:
-        "The segment, as `GET /exchanges` lists it for that exchange, among its `liveSegments` (a segment with no live data is refused with `400`). For a `cex` source, the market segment (`spot` today); for a `dex` source, the protocol of the pool, `uniswap-v3` the only one today.",
+        "The segment, as `GET /exchanges` lists it for that exchange, among its `liveSegments` (a segment with no live data is refused with `400`). For a `cex` source, the market segment (for example `spot`); for a `dex` source, the protocol of the pool, for example `uniswap-v3`, or on `solana` the segment `pumpfun`, which follows a token by its mint.",
     },
     type: {
       type: "string",
       enum: ["ticker", "kline"],
       description:
-        "Both `ticker` and `kline` connect to the lightest (fastest) cadence available for the exchange — today, 1 tick/second on every supported exchange. Choosing a specific cadence is not offered yet. A `dex` source supports only `kline`: one candle per second of the pool's trades.",
+        "Both `ticker` and `kline` connect to the lightest (fastest) cadence available for the exchange. Choosing a specific cadence is not offered. A `dex` source supports only `kline`: one candle per second of the pool's trades.",
     },
     instruments: {
       type: "array",
@@ -3475,7 +3796,7 @@ export const LiveSourceSchema = {
       },
       example: ["BTC/USDT"],
       description:
-        'The instruments the run reads. For a run started with a list, that list as sent; for one started without `instruments`, or with `["*"]`, what the start resolved: the list of pairs the compilation of the strategy records as the instruments it accepts, when it records one, or `["*"]` for every instrument the exchange/segment offers (tier-gated). An entry is written `BASE/QUOTE` and either side can be `*` to mean any, such as any base paired with USDT. Symbols are not case-sensitive and spaces around them are ignored, so `btc/usdt` and `BTC/USDT` are the same instrument. A `dex` source holds exactly one entry, the address of its pool.',
+        'The instruments the run reads. For a run started with a list, that list as sent; for one started without `instruments`, or with `["*"]`, what the start resolved: the list of pairs the compilation of the strategy records as the instruments it accepts, when it records one, or `["*"]` for every instrument the exchange/segment offers (tier-gated). An entry is written `BASE/QUOTE` and either side can be `*` to mean any, such as any base paired with USDT. Symbols are not case-sensitive and spaces around them are ignored, so `btc/usdt` and `BTC/USDT` are the same instrument. A `dex` source holds exactly one entry: the address of its pool or, on `solana`, the mint of its token.',
     },
   },
 } as const;
@@ -3497,19 +3818,19 @@ export const LiveSourceRequestSchema = {
       type: "string",
       example: "binance",
       description:
-        "The exchange id, as `GET /exchanges` lists it. For a `dex` source, the chain the pool is on; `robinhood` is the only one today.",
+        "The exchange id, as `GET /exchanges` lists it. For a `dex` source, the chain the pool or the token is on, for example `robinhood` or `solana`.",
     },
     segment: {
       type: "string",
       example: "spot",
       description:
-        "The segment, as `GET /exchanges` lists it for that exchange, among its `liveSegments` (a segment with no live data is refused with `400`). For a `cex` source, the market segment (`spot` today); for a `dex` source, the protocol of the pool, `uniswap-v3` the only one today.",
+        "The segment, as `GET /exchanges` lists it for that exchange, among its `liveSegments` (a segment with no live data is refused with `400`). For a `cex` source, the market segment (for example `spot`); for a `dex` source, the protocol of the pool, for example `uniswap-v3`, or on `solana` the segment `pumpfun`, which follows a token by its mint.",
     },
     type: {
       type: "string",
       enum: ["ticker", "kline"],
       description:
-        "Both `ticker` and `kline` connect to the lightest (fastest) cadence available for the exchange — today, 1 tick/second on every supported exchange. Choosing a specific cadence is not offered yet. A `dex` source supports only `kline`: one candle per second of the pool's trades.",
+        "Both `ticker` and `kline` connect to the lightest (fastest) cadence available for the exchange. Choosing a specific cadence is not offered. A `dex` source supports only `kline`: one candle per second of the pool's trades.",
     },
     instruments: {
       type: "array",
@@ -3517,7 +3838,7 @@ export const LiveSourceRequestSchema = {
         type: "string",
       },
       example: ["BTC/USDT"],
-      description: `Which instruments the run reads. A QTScript strategy can declare which instruments it accepts with an \`instruments\` line in its source. When the compilation of the strategy records that selection as a list of pairs, leaving \`instruments\` out, or sending \`["*"]\`, takes that list; otherwise the run reads every instrument the exchange/segment offers. A list of instruments is taken as sent, and \`[]\` and \`null\` are refused with \`400\`. An entry is written \`BASE/QUOTE\`; either side can be \`*\` to mean any: any base can be paired with USDT, and BTC can be paired with any quote. Entries are not case-sensitive and spaces around them are ignored, so \`btc/usdt\` and \`BTC/USDT\` are the same instrument. An entry that is not of that form (no \`/\`, an empty side, a \`.\` or a space inside a side, or a \`*\` mixed with other characters of a side) makes the run fail when it starts. Plan limits: a list with an entry that has a \`*\` on a side counts like \`["*"]\` and only plans that include the wildcard accept it; the other entries are counted one by one. The instruments the run actually reads come back in the run's \`sources\`. A \`dex\` source needs exactly one entry, the address of its pool (\`0x\` and 40 hexadecimal digits, not case-sensitive): it cannot be left out and \`*\` is not accepted.`,
+      description: `Which instruments the run reads. A QTScript strategy can declare which instruments it accepts with an \`instruments\` line in its source. When the compilation of the strategy records that selection as a list of pairs, leaving \`instruments\` out, or sending \`["*"]\`, takes that list; otherwise the run reads every instrument the exchange/segment offers. A list of instruments is taken as sent, and \`[]\` and \`null\` are refused with \`400\`. An entry is written \`BASE/QUOTE\`; either side can be \`*\` to mean any: any base can be paired with USDT, and BTC can be paired with any quote. Entries are not case-sensitive and spaces around them are ignored, so \`btc/usdt\` and \`BTC/USDT\` are the same instrument. An entry that is not of that form (no \`/\`, an empty side, a \`.\` or a space inside a side, or a \`*\` mixed with other characters of a side) makes the run fail when it starts. Plan limits: a list with an entry that has a \`*\` on a side counts like \`["*"]\` and only plans that include the wildcard accept it; the other entries are counted one by one. The instruments the run actually reads come back in the run's \`sources\`. A \`dex\` source needs exactly one entry: the address of its pool (\`0x\` and 40 hexadecimal digits, not case-sensitive) or, on \`solana\`, the mint of its token (a base58 key of 32 to 44 characters, case-sensitive: write it as the token has it). It cannot be left out and \`*\` is not accepted.`,
     },
   },
 } as const;
@@ -3542,6 +3863,11 @@ export const AttachLiveSourceRequestSchema = {
       maxLength: 64,
       description:
         "A string of yours. Sending the same `ref` to the same run answers the attachment it already made instead of making another one.",
+    },
+    resolveInstrument: {
+      type: "boolean",
+      default: true,
+      description: `For a \`dex\` pool. \`true\`: the strategy is told of the source, with the pair the pool's candles carry, when the pool delivers its first candle. \`false\`: it is told at once, with a stand-in instrument made of the pool's address and \`<exchange>:<segment>\`. A centralized exchange's source accepts the field and ignores it. See "The instrument of a pool" in the Live execution guide.`,
     },
   },
 } as const;
@@ -3583,6 +3909,11 @@ export const LiveAttachmentSchema = {
       type: "integer",
       description: "The seconds of warm-up in effect for this source.",
     },
+    resolveInstrument: {
+      type: "boolean",
+      description:
+        'The value in effect for this source: how the strategy is told of a `dex` pool. See "The instrument of a pool" in the Live execution guide.',
+    },
     ref: {
       type: "string",
       description: "The `ref` it was attached with, when there was one.",
@@ -3594,7 +3925,7 @@ export const LiveAttachmentSchema = {
     reason: {
       type: "string",
       description:
-        "Why it is `DETACHED` or `REFUSED`, when there is something to say: `OWNER` (you detached it), `REFUSED` (the platform refused it), `POOL_GONE` (a `dex` pool stopped being followed), `CAPACITY` (the platform has no room to follow it) or `NO_DATA` (an instrument of a centralized exchange that the platform does not capture sent nothing for five minutes). The set may grow.",
+        "Why it is `DETACHED` or `REFUSED`, when there is something to say: `OWNER` (you detached it), `REFUSED` (the platform refused it), `POOL_GONE` (a `dex` pool stopped being followed), `CAPACITY` (the platform has no room to follow it), `STRATEGY` (the strategy asked for it) or `NO_DATA` (an instrument of a centralized exchange that the platform does not capture sent nothing for five minutes). The set may grow.",
     },
     message: {
       type: "string",
@@ -3673,9 +4004,8 @@ later), and it also turns \`relay\` on. See the "Live execution" guide, "A plain
       description: `How many seconds before the run's start to replay the market feed from, so the strategy's indicators and
 windows have history when its first live tick arrives. \`0\` replays nothing: the run delivers its first
 signal as soon as it is running, but its indicators start empty and the first bar of a window can be
-partial. Omitted, the platform replays from the start of the current 15-minute block: between 0 and 900
-seconds before the run's start, depending on when it starts (0 if it starts exactly on a quarter hour),
-so the first bar of a 15-minute window is complete. The value in effect, the one you sent or the one the
+partial. Omitted, the platform chooses how far back to replay,
+so that the first bar of the usual windows is complete. The value in effect, the one you sent or the one the
 platform chose, is reported back as \`warmFrom\` on the run. Signals about the replayed time
 are not pushed on the run's channel or stream: they describe events from before the run started.
 It can be set **only when the run is started**: it is not a parameter of \`PUT /live/{runId}/params\`, and
@@ -3777,7 +4107,7 @@ in; \`accounts\` is returned when the request gave it.
       enum: ["currency", "instrument"],
       default: "currency",
       description:
-        "How the run's accounts are split, fixed when it starts. `currency` (the default) is one shared account per quote currency: every instrument of a currency draws on the same balance, as on a venue with one wallet per asset. `instrument` is one isolated account per instrument, each a simulation of that instrument alone with its own `initialFunding`, which is what makes it comparable with a backtest of the instrument but less realistic, since a venue has one wallet per asset and not one per pair. It needs the instruments of the run named: a wildcard is refused, on every plan.",
+        "How the run's accounts are split, fixed when it starts. `currency` (the default) is one shared account per quote currency: every instrument of a currency draws on the same balance, as on a venue with one wallet per asset. `instrument` is one isolated account per instrument, each a simulation of that instrument alone with its own `initialFunding`, which is what makes it comparable with a backtest of the instrument but less realistic, since a venue has one wallet per asset and not one per pair. It needs the instruments of the run named: a wildcard is refused, on every plan, at start and in every source attached afterwards.",
     },
   },
 } as const;
@@ -3873,7 +4203,7 @@ export const LiveRunSchema = {
     state: {
       type: "string",
       description:
-        "The run's health right now: `STARTING` (no runner has reported on it yet), `WAITING` (running with no market-data source attached: it holds no place on the platform until you attach one), `RUNNING`, `LAGGING` (behind the market data, usually while catching up; clears by itself), `HUNG` (stuck inside one strategy call for longer than allowed; clears when it returns), `DEGRADED` (its independent executions produced different signals), `FAILED` (refused, could not start or failed while running; `reason` says why) or `STOPPED`. `LAGGING`, `HUNG` and `DEGRADED` come and go on a running run. The set may grow: read an unknown value as a running run with something to look at. See the Live execution guide.",
+        "The run's health right now: `STARTING` (the platform has not reported on it yet), `WAITING` (running with no market-data source attached: it holds no place on the platform until you attach one), `RUNNING`, `LAGGING` (behind the market data, usually while catching up; clears by itself), `HUNG` (stuck inside one strategy call for longer than allowed; clears when it returns), `DEGRADED` (its independent executions produced different signals), `FAILED` (refused, could not start or failed while running; `reason` says why) or `STOPPED`. `LAGGING`, `HUNG` and `DEGRADED` come and go on a running run. The set may grow: read an unknown value as a running run with something to look at. See the Live execution guide.",
     },
     desired: {
       type: "string",
@@ -3964,7 +4294,7 @@ is stopped by the platform itself (\`desired: STOPPED\`), so it holds no place.
 export const LiveRunStatsSchema = {
   type: "object",
   required: ["processed", "opsPerSecond", "instrumentsSeen", "asOfMs", "stale"],
-  description: `What a run has been doing, as of its last snapshot. The platform refreshes it about once a minute
+  description: `What a run has been doing, as of its last snapshot. The platform refreshes it periodically
 while the run is being executed, so \`opsPerSecond\` is an average over that interval, not an
 instantaneous rate.
 `,
@@ -4001,7 +4331,7 @@ stay flat for hours: that is how such a run behaves, not a fault.
     stale: {
       type: "boolean",
       description: `\`true\` when the run is meant to be running (\`desired\` is \`RUNNING\`) and its counters have not
-been refreshed for several refresh intervals: the platform has stopped updating them, which is
+been refreshed for much longer than they usually are: the platform has stopped updating them, which is
 worth checking against \`state\`. \`false\` otherwise. A run whose \`processed\` is flat is not stale;
 \`progressedAtMs\` is how to tell it apart.
 `,
@@ -4014,7 +4344,7 @@ export const WarmFromSchema = {
   minimum: 0,
   maximum: 3600,
   description:
-    "The `warmFrom` in effect for this run, in seconds: the one requested when the run was started or, when none was, the one the platform chose (the distance from the run's start back to the start of the current 15-minute block, 0 to 900). It is never `null`. It is present on every run started since the field exists and absent from a run started before it existed. It never changes while the run exists.",
+    "The `warmFrom` in effect for this run, in seconds: the one requested when the run was started or, when none was, the one the platform chose. It is never `null`. It is present on every run started since the field exists and absent from a run started before it existed. It never changes while the run exists.",
 } as const;
 
 export const SandboxMinutesSchema = {
@@ -4194,7 +4524,7 @@ export const LiveRunSummarySchema = {
     state: {
       type: "string",
       description:
-        "The run's health right now: `STARTING` (no runner has reported on it yet), `WAITING` (running with no market-data source attached: it holds no place on the platform until you attach one), `RUNNING`, `LAGGING` (behind the market data, usually while catching up; clears by itself), `HUNG` (stuck inside one strategy call for longer than allowed; clears when it returns), `DEGRADED` (its independent executions produced different signals), `FAILED` (refused, could not start or failed while running; `reason` says why) or `STOPPED`. `LAGGING`, `HUNG` and `DEGRADED` come and go on a running run. The set may grow: read an unknown value as a running run with something to look at. See the Live execution guide.",
+        "The run's health right now: `STARTING` (the platform has not reported on it yet), `WAITING` (running with no market-data source attached: it holds no place on the platform until you attach one), `RUNNING`, `LAGGING` (behind the market data, usually while catching up; clears by itself), `HUNG` (stuck inside one strategy call for longer than allowed; clears when it returns), `DEGRADED` (its independent executions produced different signals), `FAILED` (refused, could not start or failed while running; `reason` says why) or `STOPPED`. `LAGGING`, `HUNG` and `DEGRADED` come and go on a running run. The set may grow: read an unknown value as a running run with something to look at. See the Live execution guide.",
     },
     desired: {
       type: "string",
@@ -4736,12 +5066,12 @@ export const LiveSignalSchema = {
     },
     type: {
       type: "string",
-      enum: ["hint", "info", "marker", "command", "paper"],
-      description: `\`paper\` items appear only for a run whose \`paper.output\` is \`mix\`; they are not relayed over the WebSocket channel.`,
+      enum: ["hint", "info", "marker", "command", "paper", "system"],
+      description: `\`paper\` items appear only for a run whose \`paper.output\` is \`mix\`; they are not relayed over the WebSocket channel. \`system\` is what a strategy tells the platform that runs it, today a request to detach a source (see "A strategy that leaves a source" in the Live execution guide): \`GET /live/{runId}/signals\` returns it only when \`type\` asks for it, and the WebSocket channel never carries it.`,
     },
     kind: {
       type: ["string", "null"],
-      description: `\`BUY\`/\`SELL\` for a \`hint\`, the command name for a \`command\`; for \`paper\`, what the item is: \`fill\`, \`trade\`, \`equity\`, \`mark\`, \`kpi\` or \`gap\`. Absent otherwise.`,
+      description: `\`BUY\`/\`SELL\` for a \`hint\`, the command name for a \`command\`, \`DETACH\` for a \`system\`; for \`paper\`, what the item is: \`fill\`, \`trade\`, \`equity\`, \`mark\`, \`kpi\` or \`gap\`. Absent otherwise.`,
     },
     eventTsMs: {
       type: "integer",
@@ -4795,6 +5125,11 @@ export const LiveSignalInstrumentSchema = {
     segment: {
       type: "string",
     },
+    id: {
+      type: "string",
+      description:
+        "For a `dex` run, the contract the signal is about: the address of the pool, or the mint of the token, as `GET /exchange/{exchange}/{segment}/instruments` lists a pool's `id`. `symbol` is the pair as the candles name it, and a symbol does not identify a token, since another can be issued under the same one, so act on `id`. Absent for the instrument of a centralized exchange.",
+    },
     symbol: {
       type: "string",
       description: "Slashed form, e.g. `BTC/USDT`.",
@@ -4842,7 +5177,7 @@ export const LiveConnectionTokenSchema = {
 
 export const LiveParamsUpdateResultSchema = {
   type: "object",
-  required: ["runId", "paramsVersion", "effectiveAtMs"],
+  required: ["runId", "paramsVersion"],
   properties: {
     runId: {
       type: "string",
@@ -4854,7 +5189,7 @@ export const LiveParamsUpdateResultSchema = {
       type: "integer",
       format: "int64",
       description:
-        "Epoch milliseconds — the earliest moment the new values are guaranteed to be in effect.",
+        "Epoch milliseconds — the earliest moment the new values are guaranteed to be in effect. Absent when the run reads no source (`state: WAITING`): it applies nothing at a moment, and starts with the new values when its first source is attached.",
     },
   },
 } as const;
@@ -4876,6 +5211,699 @@ export const LiveCommandResultSchema = {
       format: "int64",
       description:
         "Epoch milliseconds — the market position every execution applies this command at.",
+    },
+  },
+} as const;
+
+export const SignalChannelRequestSchema = {
+  type: "object",
+  required: ["name"],
+  additionalProperties: false,
+  properties: {
+    name: {
+      type: "string",
+      minLength: 1,
+      maxLength: 64,
+      description: "The name subscribers see. Your own user is never shown.",
+    },
+    description: {
+      type: "string",
+      maxLength: 500,
+    },
+    visibility: {
+      type: "string",
+      enum: ["unlisted", "public"],
+      default: "unlisted",
+      description: `\`unlisted\`: found only by its \`channelId\`. \`public\`: also listed in \`GET /signals/channels/public\`.`,
+    },
+  },
+} as const;
+
+export const UpdateSignalChannelRequestSchema = {
+  type: "object",
+  minProperties: 1,
+  additionalProperties: false,
+  properties: {
+    name: {
+      type: "string",
+      minLength: 1,
+      maxLength: 64,
+    },
+    description: {
+      type: "string",
+      maxLength: 500,
+    },
+    visibility: {
+      type: "string",
+      enum: ["unlisted", "public"],
+    },
+    rotateWebhook: {
+      type: "boolean",
+      description: `\`true\` replaces \`webhookUrl\` with a new address; the old one stops publishing at once.`,
+    },
+  },
+} as const;
+
+export const SignalChannelSchema = {
+  type: "object",
+  required: ["channelId", "name", "visibility", "delays", "createdAtMs"],
+  description:
+    "A signal channel. `webhookUrl` and `subscriptions` are present only for its owner, and so are the ids and counts of its `offers`.",
+  properties: {
+    channelId: {
+      type: "string",
+    },
+    name: {
+      type: "string",
+    },
+    description: {
+      type: "string",
+    },
+    visibility: {
+      type: "string",
+      enum: ["unlisted", "public"],
+    },
+    delays: {
+      type: "array",
+      items: {
+        type: "integer",
+      },
+      description:
+        "The delays of its offers, in seconds, smallest first, each once.",
+    },
+    offers: {
+      type: "array",
+      items: {
+        $ref: "#/components/schemas/SignalOffer",
+      },
+      description: "What the channel sells, oldest first.",
+    },
+    createdAtMs: {
+      type: "integer",
+      format: "int64",
+    },
+    webhookUrl: {
+      type: "string",
+      description:
+        "Owner only. The secret address that publishes a notice without a token (`POST /signals/hook/{hookKey}`).",
+    },
+    subscriptions: {
+      type: "integer",
+      description:
+        "Owner only. How many subscriptions are active and not expired. Who holds them is never shown.",
+    },
+  },
+} as const;
+
+export const SignalChannelListSchema = {
+  type: "object",
+  required: ["channels"],
+  properties: {
+    channels: {
+      type: "array",
+      items: {
+        $ref: "#/components/schemas/SignalChannel",
+      },
+    },
+  },
+} as const;
+
+export const PublicSignalChannelPageSchema = {
+  type: "object",
+  required: ["channels"],
+  properties: {
+    channels: {
+      type: "array",
+      items: {
+        $ref: "#/components/schemas/SignalChannel",
+      },
+    },
+    _links: {
+      $ref: "#/components/schemas/PublicLiveListLinks",
+    },
+  },
+} as const;
+
+export const SignalNoticeSourceSchema = {
+  type: "object",
+  required: ["venueType", "exchange", "segment", "instruments"],
+  additionalProperties: false,
+  description:
+    "The instrument a notice is about: `LiveSourceRequest` without `type`, which is the subscription's to say, and with the instruments named one by one.",
+  properties: {
+    venueType: {
+      type: "string",
+      enum: ["cex", "dex"],
+    },
+    exchange: {
+      type: "string",
+      description: "As in `LiveSourceRequest`.",
+    },
+    segment: {
+      type: "string",
+      description: "As in `LiveSourceRequest`.",
+    },
+    instruments: {
+      type: "array",
+      minItems: 1,
+      maxItems: 10,
+      items: {
+        type: "string",
+      },
+      description:
+        "For a `cex` source, 1 to 10 pairs written `BASE/QUOTE`, with no `*`. For a `dex` source, exactly one entry, the address of the pool or, on `solana`, the mint of the token (case-sensitive).",
+    },
+  },
+} as const;
+
+export const SignalNoticeRequestSchema = {
+  type: "object",
+  required: ["source"],
+  additionalProperties: false,
+  properties: {
+    source: {
+      $ref: "#/components/schemas/SignalNoticeSource",
+    },
+    ref: {
+      type: "string",
+      minLength: 1,
+      maxLength: 64,
+      description:
+        "A string of yours. Sending the same `ref` to the same channel answers the notice it already made.",
+    },
+    expiresIn: {
+      type: "integer",
+      minimum: 1,
+      maximum: 3600,
+      default: 300,
+      description:
+        "Seconds the notice is worth acting on. A delivery not made by then is `EXPIRED`.",
+    },
+    data: {
+      type: "object",
+      additionalProperties: {
+        type: "string",
+        minLength: 1,
+        maxLength: 256,
+      },
+      maxProperties: 16,
+      description:
+        "Anything else you want subscribers to read with the notice, as text: up to 16 entries, each key lower case (letters, digits, `_`, parts separated by `.`, up to 64 characters) and each value 1 to 256 characters with no control characters. It is shown with the delivery; it does not reach the strategy.",
+    },
+  },
+} as const;
+
+export const SignalNoticeAcceptedSchema = {
+  type: "object",
+  required: ["noticeId", "deliveries", "receivedAtMs", "expiresAtMs"],
+  properties: {
+    noticeId: {
+      type: "string",
+    },
+    deliveries: {
+      type: "integer",
+      description: "How many subscriptions the notice goes to.",
+    },
+    receivedAtMs: {
+      type: "integer",
+      format: "int64",
+    },
+    expiresAtMs: {
+      type: "integer",
+      format: "int64",
+    },
+  },
+} as const;
+
+export const SignalDeliveryCountsSchema = {
+  type: "object",
+  required: ["pending", "attached", "refused", "expired", "skipped"],
+  description:
+    "How the deliveries of a notice stand, by status (see `SignalDelivery`).",
+  properties: {
+    pending: {
+      type: "integer",
+    },
+    attached: {
+      type: "integer",
+    },
+    refused: {
+      type: "integer",
+    },
+    expired: {
+      type: "integer",
+    },
+    skipped: {
+      type: "integer",
+    },
+  },
+} as const;
+
+export const SignalNoticeSchema = {
+  type: "object",
+  required: ["noticeId", "source", "receivedAtMs", "expiresAtMs", "deliveries"],
+  properties: {
+    noticeId: {
+      type: "string",
+    },
+    ref: {
+      type: "string",
+    },
+    source: {
+      $ref: "#/components/schemas/SignalNoticeSource",
+    },
+    data: {
+      type: "object",
+      additionalProperties: {
+        type: "string",
+      },
+    },
+    receivedAtMs: {
+      type: "integer",
+      format: "int64",
+    },
+    expiresAtMs: {
+      type: "integer",
+      format: "int64",
+    },
+    deliveries: {
+      $ref: "#/components/schemas/SignalDeliveryCounts",
+    },
+  },
+} as const;
+
+export const SignalNoticePageSchema = {
+  type: "object",
+  required: ["notices"],
+  properties: {
+    notices: {
+      type: "array",
+      items: {
+        $ref: "#/components/schemas/SignalNotice",
+      },
+    },
+    _links: {
+      $ref: "#/components/schemas/PublicLiveListLinks",
+    },
+  },
+} as const;
+
+export const SignalOfferRequestSchema = {
+  type: "object",
+  required: ["delay", "maxRuns"],
+  additionalProperties: false,
+  properties: {
+    delay: {
+      type: "integer",
+      minimum: 0,
+      maximum: 3600,
+      description:
+        "Seconds after a notice is published that it reaches the runs of a subscription of this offer.",
+    },
+    maxRuns: {
+      type: "integer",
+      minimum: 1,
+      maximum: 100,
+      description:
+        "How many of the buyer's runs one subscription feeds at once.",
+    },
+    durationDays: {
+      type: "integer",
+      minimum: 1,
+      maximum: 3650,
+      description:
+        "How long a subscription lasts from the moment its code is redeemed, and what a renewal adds. Left out, it does not expire.",
+    },
+    purchaseUrl: {
+      type: "string",
+      maxLength: 500,
+      format: "uri",
+      description: "Where you sell it, shown with the channel. `https` only.",
+    },
+  },
+} as const;
+
+export const SignalOfferSchema = {
+  type: "object",
+  required: ["delay", "maxRuns"],
+  description:
+    "What a channel sells. `offerId`, `createdAtMs`, `codes`, `subscriptions` and `runs` are present only for the channel's owner.",
+  properties: {
+    offerId: {
+      type: "string",
+    },
+    delay: {
+      type: "integer",
+    },
+    maxRuns: {
+      type: "integer",
+    },
+    durationDays: {
+      type: "integer",
+      description: "Absent when a subscription of this offer does not expire.",
+    },
+    purchaseUrl: {
+      type: "string",
+    },
+    createdAtMs: {
+      type: "integer",
+      format: "int64",
+    },
+    codes: {
+      type: "object",
+      properties: {
+        minted: {
+          type: "integer",
+        },
+        redeemed: {
+          type: "integer",
+        },
+      },
+    },
+    subscriptions: {
+      type: "integer",
+      description: "Subscriptions of this offer active and not expired now.",
+    },
+    runs: {
+      type: "integer",
+      description: "Runs those subscriptions feed now.",
+    },
+  },
+} as const;
+
+export const SignalOfferListSchema = {
+  type: "object",
+  required: ["offers"],
+  properties: {
+    offers: {
+      type: "array",
+      items: {
+        $ref: "#/components/schemas/SignalOffer",
+      },
+    },
+  },
+} as const;
+
+export const SignalCodesRequestSchema = {
+  type: "object",
+  required: ["count"],
+  additionalProperties: false,
+  properties: {
+    count: {
+      type: "integer",
+      minimum: 1,
+      maximum: 100,
+    },
+  },
+} as const;
+
+export const SignalMintedCodesSchema = {
+  type: "object",
+  required: ["codes"],
+  description: "The codes just minted, in clear. They are not shown again.",
+  properties: {
+    codes: {
+      type: "array",
+      items: {
+        $ref: "#/components/schemas/MintedSignalCode",
+      },
+    },
+  },
+} as const;
+
+export const MintedSignalCodeSchema = {
+  type: "object",
+  required: ["codeId", "code", "prefix"],
+  properties: {
+    codeId: {
+      type: "string",
+    },
+    code: {
+      type: "string",
+      description: "The code to hand to the buyer. Keep it secret until then.",
+    },
+    prefix: {
+      type: "string",
+      description:
+        "Its first characters, as `GET /signals/offers/{offerId}/codes` shows it.",
+    },
+  },
+} as const;
+
+export const SignalCodeSchema = {
+  type: "object",
+  required: ["codeId", "prefix", "state", "createdAtMs"],
+  properties: {
+    codeId: {
+      type: "string",
+    },
+    prefix: {
+      type: "string",
+    },
+    state: {
+      type: "string",
+      description: `\`UNUSED\`, \`REDEEMED\` or \`REVOKED\`. Who redeemed it is never shown.`,
+    },
+    createdAtMs: {
+      type: "integer",
+      format: "int64",
+    },
+    redeemedAtMs: {
+      type: "integer",
+      format: "int64",
+    },
+  },
+} as const;
+
+export const SignalCodeListSchema = {
+  type: "object",
+  required: ["codes"],
+  properties: {
+    codes: {
+      type: "array",
+      items: {
+        $ref: "#/components/schemas/SignalCode",
+      },
+    },
+  },
+} as const;
+
+export const SignalCodeRedemptionSchema = {
+  type: "object",
+  required: ["code"],
+  additionalProperties: false,
+  properties: {
+    code: {
+      type: "string",
+      maxLength: 100,
+      description: "The code you bought.",
+    },
+  },
+} as const;
+
+export const SignalSubscriptionRunRequestSchema = {
+  type: "object",
+  required: ["runId"],
+  additionalProperties: false,
+  properties: {
+    runId: {
+      type: "string",
+      description: "One of your live runs.",
+    },
+    type: {
+      type: "string",
+      enum: ["ticker", "kline"],
+      default: "kline",
+      description:
+        "How the run reads a centralized exchange's instrument; one its strategy consumes. A pool is always read as `kline`.",
+    },
+    warmFrom: {
+      type: "integer",
+      minimum: 0,
+      maximum: 3600,
+      default: 0,
+      description:
+        "Seconds of warm-up of each attachment a delivery makes, as for `POST /live/{runId}/attachments`.",
+    },
+    resolveInstrument: {
+      type: "boolean",
+      default: true,
+      description: `As for \`POST /live/{runId}/attachments\`, for each pool a delivery attaches. For a \`dex\` pool. \`true\`: the strategy is told of the source, with the pair the pool's candles carry, when the pool delivers its first candle. \`false\`: it is told at once, with a stand-in instrument made of the pool's address and \`<exchange>:<segment>\`. A centralized exchange's source accepts the field and ignores it. See "The instrument of a pool" in the Live execution guide.`,
+    },
+  },
+} as const;
+
+export const SignalSubscriptionRunSchema = {
+  type: "object",
+  required: ["runId", "type", "warmFrom", "createdAtMs"],
+  properties: {
+    runId: {
+      type: "string",
+    },
+    type: {
+      type: "string",
+      enum: ["ticker", "kline"],
+    },
+    warmFrom: {
+      type: "integer",
+    },
+    resolveInstrument: {
+      type: "boolean",
+    },
+    createdAtMs: {
+      type: "integer",
+      format: "int64",
+    },
+  },
+} as const;
+
+export const SignalSubscriptionSchema = {
+  type: "object",
+  required: [
+    "subscriptionId",
+    "channelId",
+    "delay",
+    "maxRuns",
+    "state",
+    "runs",
+    "createdAtMs",
+  ],
+  description:
+    "What you bought by redeeming a code, and the runs it feeds now.",
+  properties: {
+    subscriptionId: {
+      type: "string",
+    },
+    channelId: {
+      type: "string",
+    },
+    channelName: {
+      type: "string",
+    },
+    delay: {
+      type: "integer",
+      description:
+        "Seconds after a notice is published that it reaches your runs.",
+    },
+    maxRuns: {
+      type: "integer",
+      description: "How many of your runs it feeds at once.",
+    },
+    expiresAtMs: {
+      type: "integer",
+      format: "int64",
+      description: "When it expires. Absent when it does not.",
+    },
+    state: {
+      type: "string",
+      description: `\`ACTIVE\`, \`EXPIRED\` (past \`expiresAtMs\`: it feeds nothing until renewed), \`REVOKED\` (the provider revoked its code) or \`ENDED\` (you cancelled it, or the channel was deleted). The set may grow.`,
+    },
+    purchaseUrl: {
+      type: "string",
+      description: "Where its offer is sold, to renew it.",
+    },
+    runs: {
+      type: "array",
+      items: {
+        $ref: "#/components/schemas/SignalSubscriptionRun",
+      },
+    },
+    createdAtMs: {
+      type: "integer",
+      format: "int64",
+    },
+  },
+} as const;
+
+export const SignalSubscriptionListSchema = {
+  type: "object",
+  required: ["subscriptions"],
+  properties: {
+    subscriptions: {
+      type: "array",
+      items: {
+        $ref: "#/components/schemas/SignalSubscription",
+      },
+    },
+  },
+} as const;
+
+export const SignalDeliverySchema = {
+  type: "object",
+  required: ["noticeId", "receivedAtMs", "dueAtMs", "status"],
+  description:
+    "One notice due to one run a subscription feeds, and what its delivery did. Until `dueAtMs` it says that a notice is coming and when, not what it is about: `source` and `data` are present from `dueAtMs` on.",
+  properties: {
+    noticeId: {
+      type: "string",
+    },
+    runId: {
+      type: "string",
+      description: "The run the delivery is for.",
+    },
+    source: {
+      description: "The notice's instrument. Present from `dueAtMs` on.",
+      allOf: [
+        {
+          $ref: "#/components/schemas/SignalNoticeSource",
+        },
+      ],
+    },
+    data: {
+      type: "object",
+      description: "The notice's text. Present from `dueAtMs` on.",
+      additionalProperties: {
+        type: "string",
+      },
+    },
+    receivedAtMs: {
+      type: "integer",
+      format: "int64",
+    },
+    dueAtMs: {
+      type: "integer",
+      format: "int64",
+      description:
+        "When the notice was due to this subscription, its publication plus the subscription's `delay`.",
+    },
+    status: {
+      type: "string",
+      description: `\`PENDING\`, \`ATTACHED\`, \`REFUSED\`, \`EXPIRED\` or \`SKIPPED\` (see \`GET /signals/subscriptions/{subscriptionId}/deliveries\`). The set may grow.`,
+    },
+    reason: {
+      type: "string",
+      description:
+        "Why it is `REFUSED` or `SKIPPED`. `REFUSED`: `PLAN_LIMIT` (a limit of your plan: the instruments a run may read, the pools you may follow at once, the runs you may have reading at once), `PLAN_REQUIRED` (your plan no longer includes live runs or subscriptions), `OTHER_FEED` (the run reads another market feed), `NOT_ACCEPTED` (the run's strategy does not accept that instrument or `type`) or `CAPACITY` (the platform had no room). `SKIPPED`: `NOT_RUNNING`, `UNSUBSCRIBED` (the run is no longer fed, or the subscription was cancelled), `ACCESS_REVOKED` (the provider revoked the code), `SUBSCRIPTION_EXPIRED` or `CHANNEL_DELETED`. The set may grow.",
+    },
+    message: {
+      type: "string",
+      description:
+        "A sentence saying more about a `REFUSED` delivery. Do not parse it.",
+    },
+    attachmentId: {
+      type: "string",
+      description: "The attachment the delivery made, when it is `ATTACHED`.",
+    },
+    deliveredAtMs: {
+      type: "integer",
+      format: "int64",
+      description: "When the delivery was made, or refused.",
+    },
+  },
+} as const;
+
+export const SignalDeliveryPageSchema = {
+  type: "object",
+  required: ["deliveries"],
+  properties: {
+    deliveries: {
+      type: "array",
+      items: {
+        $ref: "#/components/schemas/SignalDelivery",
+      },
+    },
+    _links: {
+      $ref: "#/components/schemas/PublicLiveListLinks",
     },
   },
 } as const;
